@@ -1,0 +1,32 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# ---- FictionForge 运行时数据（本地生成，不入库）----
+backend/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ---- 环境变量与密钥（含 API Key 主密钥）----
+.env
+*.env
+secret.key
+
+# ---- 前端构建产物 ----
+frontend/dist/
+frontend/node_modules/
+
+# ---- 编辑器 / 系统文件 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- Claude Code 个人工作流配置（如需共享请移除下面两行）----
+.claude/
+tasks.md
