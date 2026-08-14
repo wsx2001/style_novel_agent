@@ -3,7 +3,6 @@ import type { Project, ProjectCreate, ProjectUpdate } from '@/types'
 
 /**
  * 项目相关 API（对应 TECH.md §5.1）。
- * 后续每个域（文档/知识卡/章节/生成/设置）建一个同构模块。
  */
 export const projectsApi = {
   /** GET /projects —— 项目列表 */
@@ -38,3 +37,10 @@ export const projectsApi = {
 
 export { client, getErrorMessage }
 export type { ApiErrorBody } from './client'
+export { documentsApi } from './documents'
+export type { SnippetChunk, ConfirmImportResult } from './documents'
+export { cardsApi } from './cards'
+export { chaptersApi } from './chapters'
+export { generationsApi, generationUrls } from './generations'
+export type { ContinuePayload, RewritePayload, InspireResult } from './generations'
+export { settingsApi } from './settings'

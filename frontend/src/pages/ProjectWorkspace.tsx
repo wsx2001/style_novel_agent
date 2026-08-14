@@ -1,21 +1,23 @@
 import { useEffect } from 'react'
 import { NavLink, Outlet, useParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { projectsApi } from '@/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 
-/**
- * 项目工作台：顶部项目栏 + 项目内子导航（知识库 / 文档 / 章节）+ 子页面内容区。
- * 子路由：
- *   /project/:projectId/knowledge  知识库
- *   /project/:projectId/documents  文档解析
- *   /project/:projectId/chapters   章节编辑器
- */
-const WORKSPACE_TABS = [
-  { path: 'knowledge', label: '知识库' },
-  { path: 'documents', label: '文档' },
-  { path: 'chapters', label: '章节' },
+/** 项目内子导航：章节 / 文档 / 知识库 / 设置 */
+const TABS = [
+  { path: 'chapters', label: '章节', icon: '📝' },
+  { path: 'documents', label: '文档', icon: '📄' },
+  { path: 'knowledge', label: '知识库', icon: '🗂️' },
+  { path: 'settings', label: '设置', icon: '⚙️' },
 ]
 
+/**
+ * 项目工作台：
+ * - 左侧：项目内导航（文档 / 知识库 / 章节 / 设置）
+ * - 右侧：子页面内容区（<Outlet />）
+ */
 export default function ProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>()
   const setCurrentProjectId = useAppStore((s) => s.setCurrentProjectId)
@@ -25,39 +27,44 @@ export default function ProjectWorkspace() {
     if (projectId) setCurrentProjectId(projectId)
   }, [projectId, setCurrentProjectId])
 
-  return (
-    <div className="flex min-h-full flex-col">
-      {/* 顶部项目栏 */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-6">
-        <div className="flex items-baseline gap-3">
-          <span className="text-lg font-semibold text-foreground">项目工作台</span>
-          <span className="text-sm text-slate-400">项目 ID：{projectId}</span>
-        </div>
-        {/* TODO: 项目统计、导出按钮 */}
-      </header>
+  const { data: project } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => projectsApi.get(projectId!),
+    enabled: !!projectId,
+  })
 
-      {/* 项目内子导航 */}
-      <nav className="flex shrink-0 gap-1 border-b border-border bg-card px-4 pt-2">
-        {WORKSPACE_TABS.map((tab) => (
+  return (
+    <div className="flex min-h-full">
+      <nav className="flex w-44 shrink-0 flex-col border-r border-border bg-card px-2 py-4">
+        <div className="mb-3 px-2">
+          <p className="text-[10px] uppercase tracking-wide text-slate-400">项目</p>
+          <h1 className="truncate text-sm font-semibold text-foreground">{project?.title ?? '…'}</h1>
+        </div>
+        {TABS.map((tab) => (
           <NavLink
             key={tab.path}
             to={tab.path}
             className={({ isActive }) =>
               cn(
-                'rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors',
+                'flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
                 isActive
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-slate-500 hover:text-foreground',
+                  ? 'bg-primary/10 font-medium text-primary'
+                  : 'text-slate-600 hover:bg-background hover:text-foreground',
               )
             }
           >
+            <span aria-hidden="true">{tab.icon}</span>
             {tab.label}
           </NavLink>
         ))}
+        <NavLink
+          to="/"
+          className="mt-auto flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-background hover:text-foreground"
+        >
+          ← 返回项目列表
+        </NavLink>
       </nav>
-
-      {/* 子页面内容区 */}
-      <div className="flex-1 overflow-auto">
+      <div className="min-w-0 flex-1 overflow-auto">
         <Outlet />
       </div>
     </div>
