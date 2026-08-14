@@ -10,6 +10,7 @@ from .api.v1 import router as api_v1_router
 from .api.v1.cards import router as cards_router
 from .api.v1.chapters import router as chapters_router
 from .api.v1.documents import router as documents_router
+from .api.v1.export import router as export_router
 from .api.v1.generations import router as generations_router
 from .api.v1.projects import router as projects_router
 from .api.v1.settings import router as settings_router
@@ -41,6 +42,7 @@ app.include_router(projects_router)
 app.include_router(documents_router)
 app.include_router(cards_router)
 app.include_router(chapters_router)
+app.include_router(export_router)
 app.include_router(generations_router)
 app.include_router(settings_router)
 

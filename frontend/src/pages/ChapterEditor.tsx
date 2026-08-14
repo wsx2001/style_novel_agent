@@ -5,6 +5,7 @@ import { chaptersApi } from '@/api/chapters'
 import { getErrorMessage } from '@/api/client'
 import { MarkdownEditor } from '@/components/editor/MarkdownEditor'
 import { GenerationPanel } from '@/components/editor/GenerationPanel'
+import { ChapterVersionsModal } from '@/components/editor/ChapterVersionsModal'
 import { cn } from '@/lib/utils'
 import type { Chapter } from '@/types'
 
@@ -36,6 +37,7 @@ export default function ChapterEditor() {
   const [content, setContent] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [dirty, setDirty] = useState(false)
+  const [versionsOpen, setVersionsOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const selectChapter = (chapter: Chapter) => {
@@ -162,6 +164,13 @@ export default function ChapterEditor() {
             {saveMutation.isPending ? '保存中…' : '保存'}
           </button>
           <button
+            className="shrink-0 rounded-md border border-border px-3 py-2 text-sm font-medium text-slate-600 hover:bg-background disabled:opacity-50"
+            disabled={!activeId}
+            onClick={() => setVersionsOpen(true)}
+          >
+            历史版本
+          </button>
+          <button
             className="shrink-0 text-xs text-slate-400 hover:text-danger disabled:opacity-50"
             disabled={!activeId}
             onClick={handleDelete}
@@ -195,6 +204,20 @@ export default function ChapterEditor() {
           />
         </aside>
       )}
+
+      {/* 历史版本弹窗 */}
+      <ChapterVersionsModal
+        open={versionsOpen}
+        onClose={() => setVersionsOpen(false)}
+        chapterId={activeId ?? ''}
+        currentContent={content}
+        onRolledBack={(c) => {
+          setContent(c)
+          setDirty(false)
+          queryClient.invalidateQueries({ queryKey: ['chapters', projectId] })
+          setError(null)
+        }}
+      />
     </div>
   )
 }

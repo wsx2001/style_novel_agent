@@ -39,3 +39,23 @@ class ChapterUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=255)
     content: Optional[str] = None
     word_count: Optional[int] = Field(default=None, ge=0)
+
+
+class ChapterVersionCreate(BaseModel):
+    """手动创建版本快照请求体（docs/TECH.md §5.4）。"""
+
+    content: str = ""
+    note: Optional[str] = None
+
+
+class ChapterVersionRead(BaseModel):
+    """版本快照响应体（含正文 / 备注 / 时间戳）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    chapter_id: str
+    content: str
+    note: str
+    created_at: datetime
+    updated_at: datetime

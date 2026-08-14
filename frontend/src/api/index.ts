@@ -1,6 +1,9 @@
 import client, { getErrorMessage } from './client'
 import type { Project, ProjectCreate, ProjectUpdate } from '@/types'
 
+/** 导出文件格式（GET /projects/{id}/export?format=） */
+export type ExportFormat = 'txt' | 'markdown' | 'json' | 'docx'
+
 /**
  * 项目相关 API（对应 TECH.md §5.1）。
  */
@@ -33,6 +36,23 @@ export const projectsApi = {
   async remove(projectId: string): Promise<void> {
     await client.delete(`/projects/${projectId}`)
   },
+
+  /** GET /projects/{project_id}/export?format= —— 导出项目并触发浏览器下载 */
+  async exportFile(projectId: string, format: ExportFormat): Promise<void> {
+    const { data, headers } = await client.get(`/projects/${projectId}/export`, {
+      params: { format },
+      responseType: 'blob',
+    })
+    const disposition = headers['content-disposition'] ?? ''
+    const match = /filename="?([^";]+)"?/.exec(disposition)
+    const filename = match?.[1] ?? `export.${format}`
+    const url = URL.createObjectURL(data as Blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
+  },
 }
 
 export { client, getErrorMessage }
@@ -41,6 +61,7 @@ export { documentsApi } from './documents'
 export type { SnippetChunk, ConfirmImportResult } from './documents'
 export { cardsApi } from './cards'
 export { chaptersApi } from './chapters'
+export type { ChapterVersionCreate } from './chapters'
 export { generationsApi, generationUrls } from './generations'
 export type { ContinuePayload, RewritePayload, InspireResult } from './generations'
 export { settingsApi } from './settings'
