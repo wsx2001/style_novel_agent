@@ -368,8 +368,10 @@ async def generate_continue(
             async for delta in client.chat_completion_stream(
                 messages,
                 model=config.model,
-                temperature=payload.temperature,
-                max_tokens=DEFAULT_MAX_TOKENS,
+                depth="auto",
+                user_params={"temperature": payload.temperature, "max_tokens": DEFAULT_MAX_TOKENS},
+                context_length=sum(len(m["content"]) for m in messages),
+                knowledge_card_count=len(cards),
             ):
                 for index, text in splitter.feed(delta):
                     if index is None or not text:
@@ -457,8 +459,10 @@ async def generate_rewrite(
             async for delta in client.chat_completion_stream(
                 messages,
                 model=config.model,
-                temperature=payload.temperature,
-                max_tokens=DEFAULT_MAX_TOKENS,
+                depth="auto",
+                user_params={"temperature": payload.temperature, "max_tokens": DEFAULT_MAX_TOKENS},
+                context_length=sum(len(m["content"]) for m in messages),
+                knowledge_card_count=len(cards),
             ):
                 for index, text in splitter.feed(delta):
                     if index is None or not text:
@@ -512,7 +516,12 @@ async def generate_inspire(
     ]
     try:
         content = await client.chat_completion(
-            messages, model=config.model, temperature=payload.temperature, max_tokens=1024
+            messages,
+            model=config.model,
+            depth="auto",
+            user_params={"temperature": payload.temperature, "max_tokens": 1024},
+            context_length=sum(len(m["content"]) for m in messages),
+            knowledge_card_count=0,
         )
     except Exception as exc:
         raise HTTPException(

@@ -131,6 +131,11 @@ async def stream_candidates(
     temperature: float,
     max_tokens: int,
     model: Optional[str] = None,
+    depth: Optional[str] = None,
+    user_params: Optional[dict[str, Any]] = None,
+    mapping: Optional[dict[str, Any]] = None,
+    context_length: int = 0,
+    knowledge_card_count: int = 0,
 ) -> AsyncIterator[str]:
     """流式调用 LLM 并解析多候选，产出 SSE 帧（delta / done）的 async generator。
 
@@ -140,7 +145,15 @@ async def stream_candidates(
     """
     splitter = CandidateSplitter()
     async for delta in client.chat_completion_stream(
-        messages, model=model, temperature=temperature, max_tokens=max_tokens
+        messages,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        depth=depth,
+        user_params=user_params,
+        mapping=mapping,
+        context_length=context_length,
+        knowledge_card_count=knowledge_card_count,
     ):
         for index, text in splitter.feed(delta):
             if index is None or not text:
