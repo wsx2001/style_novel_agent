@@ -11,6 +11,7 @@ embedder 参数：提供 `async embed_texts(texts) -> list[list[float]]` 的对�
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 
 import chromadb
@@ -19,6 +20,8 @@ from chromadb.utils.embedding_functions import EmbeddingFunction
 
 from ...config import settings
 from ..embedding.embedder import LocalHashEmbedder
+
+logger = logging.getLogger(__name__)
 
 
 class _UnusedEmbeddingFunction(EmbeddingFunction):
@@ -121,3 +124,64 @@ class HybridRetriever:
                 }
             )
         return items
+
+    async def recommend_cards(
+        self,
+        project_id: str,
+        query_text: str,
+        explicit_card_ids: list[str],
+        top_n: int = 12,
+        query_top_k: int = 20,
+        snippets_per_card: int = 3,
+    ) -> list[dict[str, Any]]:
+        """检索尾部文本对应的片段，聚合推荐卡片并与显式卡片合并去重。
+
+        （docs/TECH.md §6.5：章节续写/重写时，用尾部文本查 Chroma top_k 片段，
+        按 card_id 聚合得到推荐卡片，与前端显式选择的卡片合并。）
+
+        返回按 card_id 去重后的卡片引用列表：显式卡片在前，推荐卡片按相似度
+        （最佳距离）升序，总条数不超过 top_n。每项
+            {"card_id": str, "snippets": list[str]}   # 最多 snippets_per_card 条原文片段
+        检索失败或 query_text 为空时回退为仅返回显式卡片，不中断生成流程。
+        """
+        explicit = [cid for cid in explicit_card_ids if cid]
+        snippets_by_card: dict[str, list[str]] = {cid: [] for cid in explicit}
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        if query_text and query_text.strip():
+            try:
+                snippets = await self.query_snippets(
+                    project_id, query_text.strip(), top_k=query_top_k
+                )
+            except Exception:
+                logger.warning("Chroma 检索失败，仅使用显式卡片（project=%s）", project_id)
+                snippets = []
+            for snip in snippets:
+                cid = snip.get("card_id")
+                if not cid:
+                    continue
+                grouped.setdefault(cid, []).append(snip)
+            # 命中片段补充到对应卡片（含显式卡片），供 Prompt 引用原文
+            for cid, snips in grouped.items():
+                snippets_by_card.setdefault(cid, []).extend(
+                    s["text"] for s in snips[:snippets_per_card]
+                )
+        # 推荐卡片按最佳距离升序（距离越小越相似）
+        recommended = sorted(
+            grouped, key=lambda cid: min(s["distance"] for s in grouped[cid])
+        )
+
+        order: list[str] = []
+        for cid in explicit:  # 显式卡片全部保留（用户选择，不裁剪）
+            if cid not in order:
+                order.append(cid)
+        for cid in recommended:
+            if len(order) >= top_n:
+                break
+            if cid not in order:
+                order.append(cid)
+
+        return [
+            {"card_id": cid, "snippets": snippets_by_card.get(cid, [])}
+            for cid in order
+        ]
