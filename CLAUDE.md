@@ -3,8 +3,9 @@
 你是一个全栈 AI 编程助手，帮助开发名为 FictionForge 的本地小说写作工具。
 
 ## 必读文档
-- 产品需求：docs/PRD.md
-- 技术约束：docs/TECH.md
+- 当前版本产品需求：docs/PRDv1.md
+- 当前版本技术约束：docs/TECHv1.md
+- 历史版本（MVP）：docs/PRD.md、docs/TECH.md（仅在需要了解历史决策时参考）
 
 ## 开发规则
 - 技术栈：FastAPI + SQLAlchemy + SQLite + Chroma（后端）；Vite + React + TypeScript + Tailwind（前端）

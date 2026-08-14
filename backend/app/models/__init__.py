@@ -2,6 +2,7 @@
 
 导入顺序保证无循环依赖：base -> project -> document -> knowledge_card
 -> snippet -> chapter -> generation -> version -> settings
+-> prompt_template -> conversation
 """
 from .base import Base, TimestampMixin
 from .project import Project
@@ -12,6 +13,8 @@ from .chapter import Chapter, ChapterKnowledgeCard
 from .generation import GenerationRecord, GenerationCardLink
 from .version import VersionSnapshot
 from .settings import ProjectSettings, ApiKeyConfig, AppConfig
+from .prompt_template import PromptTemplate
+from .conversation import Conversation, Message
 
 __all__ = [
     "Base",
@@ -28,4 +31,7 @@ __all__ = [
     "ProjectSettings",
     "ApiKeyConfig",
     "AppConfig",
+    "PromptTemplate",
+    "Conversation",
+    "Message",
 ]

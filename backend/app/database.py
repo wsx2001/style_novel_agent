@@ -30,6 +30,12 @@ async_session_maker = async_sessionmaker(
     autoflush=False,
 )
 
+# V1 全局默认配置（AppConfig 种子记录，幂等写入）
+DEFAULT_APP_CONFIGS: dict[str, dict] = {
+    "global_default_model_config": {"depth": "auto"},
+    "global_default_prompt_template_id": "",
+}
+
 
 @event.listens_for(engine.sync_engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
@@ -51,12 +57,32 @@ def _ensure_db_parent() -> None:
 
 
 async def init_db() -> None:
-    """创建所有表（幂等）。导入 models 使所有模型注册到 Base.metadata。"""
+    """创建所有表（幂等）并写入全局默认配置。导入 models 使所有模型注册到 Base.metadata。"""
     from .models import Base  # noqa: F401
 
     _ensure_db_parent()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await seed_default_app_configs()
+
+
+async def seed_default_app_configs() -> None:
+    """幂等写入 AppConfig 全局默认记录（key 已存在则跳过）。
+
+    目前两条 V1 默认记录：
+    - global_default_model_config     全局默认模型配置（思维深度等）
+    - global_default_prompt_template_id 全局默认提示词模板 ID（空串表示未设置）
+    """
+    from sqlalchemy import select
+
+    from .models import AppConfig
+
+    async with async_session_maker() as session:
+        for key, value in DEFAULT_APP_CONFIGS.items():
+            exists = await session.scalar(select(AppConfig.id).where(AppConfig.key == key))
+            if exists is None:
+                session.add(AppConfig(key=key, value=value))
+        await session.commit()
 
 
 async def get_db():
