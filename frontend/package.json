@@ -1,0 +1,44 @@
+{
+  "name": "fictionforge-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@milkdown/core": "^7.22.1",
+    "@milkdown/ctx": "^7.22.1",
+    "@milkdown/plugin-listener": "^7.22.1",
+    "@milkdown/preset-commonmark": "^7.22.1",
+    "@milkdown/prose": "^7.22.1",
+    "@milkdown/react": "^7.22.1",
+    "@milkdown/theme-nord": "^7.22.1",
+    "@tanstack/react-query": "^5.101.4",
+    "axios": "^1.19.0",
+    "clsx": "^2.1.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-dropzone": "^20.1.0",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.18.2",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "oxlint": "^1.75.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  },
+  "description": "FictionForge 前端（Vite + React + TypeScript + Tailwind）"
+}

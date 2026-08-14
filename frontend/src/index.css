@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/*
+ * FictionForge 主题令牌（Tailwind CSS v4 CSS-first 配置）
+ * 通过 @theme 定义的设计令牌会生成对应工具类，如：
+ *   bg-background / text-foreground / bg-sidebar / border-border ...
+ */
+@theme {
+  /* 全局 */
+  --color-background: #f8fafc;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --color-border: #e2e8f0;
+  --color-input: #cbd5e1;
+  --color-ring: #6366f1;
+
+  /* 主色（靛蓝，偏“创作/灵感”气质） */
+  --color-primary: #6366f1;
+  --color-primary-foreground: #ffffff;
+  --color-primary-hover: #4f46e5;
+
+  /* 侧边栏（深色） */
+  --color-sidebar: #111827;
+  --color-sidebar-foreground: #cbd5e1;
+  --color-sidebar-muted: #64748b;
+  --color-sidebar-accent: #6366f1;
+  --color-sidebar-active: #1f2937;
+
+  /* 语义色 */
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+
+  /* 字体 */
+  --font-sans:
+    ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei",
+    "Segoe UI", sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+}

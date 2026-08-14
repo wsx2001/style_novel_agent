@@ -1,6 +1,6 @@
-# FictionForge 后端依赖
-# 安装：cd backend && pip install -r requirements.txt
-# 使用 >= 下限锁定主版本，升级前请测试（参考 docs/TECH.md 第 10 节）
+# FictionForge backend dependencies
+# Install: cd backend && pip install -r requirements.txt
+# Use >= lower bound to pin major versions; test before upgrading (docs/TECH.md sec 10)
 
 fastapi>=0.115
 uvicorn[standard]>=0.34
