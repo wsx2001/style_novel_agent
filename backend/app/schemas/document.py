@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 FileType = Literal["txt", "md", "docx"]
 DocumentStatus = Literal["pending", "parsing", "parsed", "imported", "failed"]
 ParseThreshold = Literal["low", "medium", "high"]
+CardType = Literal["character", "world", "term", "style", "event"]
 
 
 class DocumentCreate(BaseModel):
@@ -54,3 +55,12 @@ class DocumentParseRequest(BaseModel):
 
     threshold: Optional[ParseThreshold] = None
     manual_confirm: Optional[bool] = None
+
+
+class CandidateCard(BaseModel):
+    """LLM 抽取产出的候选知识卡（确认导入前，docs/TECH.md §5.2）。"""
+
+    card_type: CardType
+    title: str = Field(..., min_length=1, max_length=255)
+    content_json: dict = Field(default_factory=dict)
+    snippet_ids: list[str] = Field(default_factory=list)

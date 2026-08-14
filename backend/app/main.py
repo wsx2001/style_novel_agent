@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import models  # noqa: F401  确保所有模型注册到 Base.metadata
 from .api.v1 import router as api_v1_router
+from .api.v1.cards import router as cards_router
 from .api.v1.documents import router as documents_router
 from .api.v1.projects import router as projects_router
 from .config import settings
@@ -35,6 +36,7 @@ app.add_middleware(
 app.include_router(api_v1_router)
 app.include_router(projects_router)
 app.include_router(documents_router)
+app.include_router(cards_router)
 
 # 前端静态托管：FRONTEND_DIST 存在时挂载（放最后，避免吞掉 API 路由）
 frontend_dist = settings.frontend_dist
