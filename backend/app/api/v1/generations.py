@@ -30,6 +30,7 @@ from ...models import (
     KnowledgeCard,
     Project,
 )
+from .llm_deps import find_api_key_config, resolve_client
 from ...schemas.generation import (
     ContinueRequest,
     GenerationRead,
@@ -38,9 +39,7 @@ from ...schemas.generation import (
     InspireResponse,
     RewriteRequest,
 )
-from ...services.crypto.api_key import decrypt_api_key
 from ...services.embedding.embedder import Embedder
-from ...services.llm.client import LLMClient, create_client
 from ...services.llm.prompts import (
     CONTINUE_SYSTEM_PROMPT,
     CONTINUE_USER_TEMPLATE,
@@ -83,41 +82,6 @@ async def _get_chapter_or_404(chapter_id: str, db: AsyncSession) -> Chapter:
             detail=f"章节 {chapter_id} 不存在",
         )
     return chapter
-
-
-async def _find_api_key_config(db: AsyncSession, project_id: str) -> ApiKeyConfig | None:
-    """查找可用的 API Key 配置：优先项目级默认，其次项目级任意，再回退全局。"""
-    scoped = await db.execute(
-        select(ApiKeyConfig)
-        .where(ApiKeyConfig.project_id == project_id)
-        .order_by(ApiKeyConfig.is_default.desc(), ApiKeyConfig.created_at)
-    )
-    config = scoped.scalars().first()
-    if config is not None:
-        return config
-    global_result = await db.execute(
-        select(ApiKeyConfig)
-        .where(ApiKeyConfig.project_id.is_(None))
-        .order_by(ApiKeyConfig.is_default.desc(), ApiKeyConfig.created_at)
-    )
-    return global_result.scalars().first()
-
-
-def _resolve_client(config: ApiKeyConfig) -> tuple[str, LLMClient]:
-    """解密 API Key 并构造 LLM 客户端（解密失败 → 500，未配模型 → 400）。"""
-    try:
-        api_key = decrypt_api_key(config.encrypted_key)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"API Key 解密失败：{exc}",
-        ) from exc
-    if not config.model:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="API Key 未配置模型，请在设置中补全 model 字段",
-        )
-    return api_key, create_client(api_key=api_key, base_url=config.base_url, model=config.model)
 
 
 def _card_item(card: KnowledgeCard, snippets: list[str]) -> dict[str, Any]:
@@ -325,13 +289,13 @@ async def generate_continue(
         event: error   data: {"message"}                # LLM 失败/流中断
     """
     chapter = await _get_chapter_or_404(chapter_id, db)
-    config = await _find_api_key_config(db, chapter.project_id)
+    config = await find_api_key_config(db, chapter.project_id)
     if config is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="请先在设置中配置 API Key",
         )
-    api_key, client = _resolve_client(config)
+    api_key, client = resolve_client(config)
 
     tail = chapter.content[-TAIL_CONTEXT_CHARS:]
     cards, snippets_by_card = await _select_cards(
@@ -411,13 +375,13 @@ async def generate_rewrite(
 ) -> StreamingResponse:
     """重写选中段落：按段落文本检索相关卡片 → 组装 Prompt → 流式生成多候选（SSE）。"""
     chapter = await _get_chapter_or_404(chapter_id, db)
-    config = await _find_api_key_config(db, chapter.project_id)
+    config = await find_api_key_config(db, chapter.project_id)
     if config is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="请先在设置中配置 API Key",
         )
-    api_key, client = _resolve_client(config)
+    api_key, client = resolve_client(config)
 
     cards, snippets_by_card = await _select_cards(
         db, chapter.project_id, payload.selected_text, payload.card_ids, api_key, config
@@ -502,13 +466,13 @@ async def generate_inspire(
 ) -> InspireResponse:
     """围绕主题生成一段小说灵感（非流式调用，返回单条文本并保存记录）。"""
     await _get_project_or_404(project_id, db)
-    config = await _find_api_key_config(db, project_id)
+    config = await find_api_key_config(db, project_id)
     if config is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="请先在设置中配置 API Key",
         )
-    _, client = _resolve_client(config)
+    _, client = resolve_client(config)
 
     messages = [
         {"role": "system", "content": INSPIRE_SYSTEM_PROMPT},
