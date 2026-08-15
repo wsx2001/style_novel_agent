@@ -39,3 +39,24 @@ export interface AppConfig extends Timestamped {
   key: string
   value: Record<string, unknown>
 }
+
+/** 思维深度映射配置（对应后端 AppConfig depth_mapping_config，docs/TECHv1.md §8.1）。
+ * modelOverrides 为前端 camelCase 形态，与后端 model_overrides 的映射在 api/settings.ts 完成。 */
+export interface DepthMapping {
+  default: Record<string, unknown>
+  modelOverrides?: Record<string, unknown>
+}
+
+/** 全局应用设置（GET/PATCH /settings/app，对应 AppConfig global_default_* 键） */
+export interface GlobalAppSettings {
+  /** 全局默认模型配置（新项目创建时复制为项目默认） */
+  global_default_model_config: Record<string, unknown>
+  /** 全局默认提示词模板 ID（空串表示未设置） */
+  global_default_prompt_template_id: string
+}
+
+/** 更新全局设置请求体（所有字段可选，仅显式传入的字段生效） */
+export interface GlobalAppSettingsUpdate {
+  global_default_model_config?: Record<string, unknown>
+  global_default_prompt_template_id?: string
+}

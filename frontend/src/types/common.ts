@@ -27,6 +27,16 @@ export type GenerationType = 'continue' | 'rewrite' | 'inspire' | 'outline'
 /** 生成状态 */
 export type GenerationStatus = 'pending' | 'streaming' | 'completed' | 'failed'
 
+/** 思维深度等级（docs/TECHv1.md §8.1：无/自动/低/中/高/极高） */
+export type DepthLevel = 'none' | 'auto' | 'low' | 'medium' | 'high' | 'extreme'
+
+/** 模型配置（V1：思维深度必填，temperature / maxTokens 可选） */
+export interface ModelConfig {
+  depth: DepthLevel
+  temperature?: number
+  maxTokens?: number
+}
+
 /** API 提供商 */
 export type ApiProvider = 'openai' | 'deepseek' | 'kimi' | 'moonshot' | 'custom'
 

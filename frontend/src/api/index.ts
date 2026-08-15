@@ -62,6 +62,16 @@ export type { SnippetChunk, ConfirmImportResult } from './documents'
 export { cardsApi } from './cards'
 export { chaptersApi } from './chapters'
 export type { ChapterVersionCreate } from './chapters'
-export { generationsApi, generationUrls } from './generations'
-export type { ContinuePayload, RewritePayload, InspireResult } from './generations'
+export { generationsApi, generationUrls, continueGeneration, rewriteGeneration, toModelConfigWire } from './generations'
+export type {
+  ContinuePayload,
+  RewritePayload,
+  ContinueParams,
+  RewriteParams,
+  InspireResult,
+  ModelConfigWire,
+} from './generations'
 export { settingsApi } from './settings'
+export { conversationsApi } from './conversations'
+export type { SendMessageHandlers } from './conversations'
+export { promptTemplatesApi } from './promptTemplates'
