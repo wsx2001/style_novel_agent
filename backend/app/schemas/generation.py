@@ -12,14 +12,21 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 GenerationType = Literal["continue", "rewrite", "inspire", "outline"]
 GenerationStatus = Literal["pending", "streaming", "completed", "failed"]
 
 
 class ContinueRequest(BaseModel):
-    """续写请求体（docs/TECH.md §5.5）。"""
+    """续写请求体（docs/TECH.md §5.5；V1 新增 model_config / system_prompt_template_id）。
+
+    注意：Pydantic v2 保留 `model_config` 作配置属性，不能用作字段名。
+    因此 Python 侧字段承接名统一为 request_model_config，
+    通过 validation_alias 允许请求体以 model_config 键写入、serialization_alias 保持对外键一致。
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     prompt: Optional[str] = None  # 额外续写要求
     card_ids: list[str] = Field(default_factory=list)
@@ -27,10 +34,18 @@ class ContinueRequest(BaseModel):
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     view: Optional[str] = None  # 叙事视角（第一人称/第三人称等）
     candidate_count: int = Field(default=3, ge=1, le=5)
+    request_model_config: Optional[dict] = Field(
+        default=None,
+        validation_alias=AliasChoices("model_config", "request_model_config"),
+        serialization_alias="model_config",
+    )
+    system_prompt_template_id: Optional[str] = None
 
 
 class RewriteRequest(BaseModel):
-    """重写请求体（docs/TECH.md §5.5）。"""
+    """重写请求体（docs/TECH.md §5.5；V1 新增 model_config / system_prompt_template_id）。"""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     selected_text: str = Field(..., min_length=1)
     instruction: Optional[str] = None
@@ -39,6 +54,12 @@ class RewriteRequest(BaseModel):
     target_words: int = Field(default=500, ge=50, le=5000)
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     candidate_count: int = Field(default=3, ge=1, le=5)
+    request_model_config: Optional[dict] = Field(
+        default=None,
+        validation_alias=AliasChoices("model_config", "request_model_config"),
+        serialization_alias="model_config",
+    )
+    system_prompt_template_id: Optional[str] = None
 
 
 class InspireRequest(BaseModel):

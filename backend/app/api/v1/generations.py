@@ -1,12 +1,15 @@
 # backend/app/api/v1/generations.py
-"""AI 生成 API（docs/TECH.md §5.5）。
+"""AI 生成 API（docs/TECH.md §5.5；V1 支持 model_config / system_prompt_template_id，docs/TECHv1.md §5.5）。
 
 - POST /chapters/{chapter_id}/generate/continue  续写（SSE 流式，多候选）
 - POST /chapters/{chapter_id}/generate/rewrite   重写（SSE 流式，多候选）
 - POST /projects/{project_id}/generate/inspire   灵感生成（简单实现，同步返回）
 - GET  /projects/{project_id}/generations        生成记录列表（?type=&chapter_id=&q=）
 
-错误处理：未配置 API Key → 400；解密失败 → 500；LLM 调用失败：
+续写/重写可传入 model_config（depth/temperature/max_tokens）与 system_prompt_template_id；
+未提供时按 请求 > 项目默认 > 全局默认 解析模型配置与系统提示词（docs/TECHv1.md §7.1）。
+
+错误处理：未配置 API Key → 400；请求模板不存在/作用域不匹配 → 400；解密失败 → 500；LLM 调用失败：
     续写/重写（已进入流式）→ SSE error 事件 + 记录 status=failed；
     灵感（同步调用）→ 502。
 """
@@ -40,6 +43,11 @@ from ...schemas.generation import (
     RewriteRequest,
 )
 from ...services.embedding.embedder import Embedder
+from ...services.generation import (
+    GenerationConfigError,
+    resolve_generation_system_prompt,
+    resolve_model_config,
+)
 from ...services.llm.prompts import (
     CONTINUE_SYSTEM_PROMPT,
     CONTINUE_USER_TEMPLATE,
@@ -47,6 +55,7 @@ from ...services.llm.prompts import (
     INSPIRE_USER_TEMPLATE,
     REWRITE_SYSTEM_PROMPT,
     REWRITE_USER_TEMPLATE,
+    build_context_for_prompt,
     candidate_delimiter_list,
 )
 from ...services.llm.stream import CandidateSplitter, sse_event
@@ -197,8 +206,9 @@ def _build_continue_messages(
     cards: list[KnowledgeCard],
     snippets_by_card: dict[str, list[str]],
     style: Optional[KnowledgeCard],
+    system_prompt: str,
 ) -> list[dict[str, str]]:
-    """组装续写 Prompt（docs/TECH.md §7.1）。"""
+    """组装续写 Prompt（docs/TECH.md §7.1；系统提示词由调用方解析传入）。"""
     sections = _split_by_type(cards, snippets_by_card)
     extra = ""
     if payload.prompt and payload.prompt.strip():
@@ -216,7 +226,7 @@ def _build_continue_messages(
         candidate_delimiters=candidate_delimiter_list(payload.candidate_count),
     )
     return [
-        {"role": "system", "content": CONTINUE_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user},
     ]
 
@@ -226,8 +236,9 @@ def _build_rewrite_messages(
     cards: list[KnowledgeCard],
     snippets_by_card: dict[str, list[str]],
     style: Optional[KnowledgeCard],
+    system_prompt: str,
 ) -> list[dict[str, str]]:
-    """组装重写 Prompt（docs/TECH.md §7.2）。"""
+    """组装重写 Prompt（docs/TECH.md §7.2；系统提示词由调用方解析传入）。"""
     sections = _split_by_type(cards, snippets_by_card)
     user = REWRITE_USER_TEMPLATE.format(
         style_card_json=_json_section([style], snippets_by_card) if style else "（无）",
@@ -241,7 +252,7 @@ def _build_rewrite_messages(
         candidate_delimiters=candidate_delimiter_list(payload.candidate_count),
     )
     return [
-        {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user},
     ]
 
@@ -302,7 +313,38 @@ async def generate_continue(
         db, chapter.project_id, tail, payload.card_ids, api_key, config
     )
     style = _style_card(cards, None)
-    messages = _build_continue_messages(payload, tail, cards, snippets_by_card, style)
+
+    # V1：解析模型配置（请求 > 项目默认 > 全局默认）与系统提示词（docs/TECHv1.md §7.1）
+    config_dict = await resolve_model_config(
+        db, chapter.project_id, payload.request_model_config
+    )
+    depth = config_dict.get("depth", "auto")
+    temperature = config_dict.get("temperature", payload.temperature)
+    max_tokens = config_dict.get("max_tokens", DEFAULT_MAX_TOKENS)
+
+    context = await build_context_for_prompt(
+        db,
+        project_id=chapter.project_id,
+        chapter_id=chapter.id,
+        knowledge_cards=cards,
+        style_card=style,
+        user_input=payload.prompt,
+    )
+    try:
+        system_prompt = await resolve_generation_system_prompt(
+            db,
+            chapter.project_id,
+            payload.system_prompt_template_id,
+            context,
+            builtin=CONTINUE_SYSTEM_PROMPT,
+        )
+    except GenerationConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    messages = _build_continue_messages(
+        payload, tail, cards, snippets_by_card, style, system_prompt
+    )
 
     record = _create_record(
         project_id=chapter.project_id,
@@ -311,10 +353,13 @@ async def generate_continue(
         input_text=tail or chapter.content,
         params={
             "target_words": payload.target_words,
-            "temperature": payload.temperature,
+            "temperature": temperature,
+            "depth": depth,
+            "model_config": config_dict,
             "view": payload.view,
             "prompt": payload.prompt,
             "candidate_count": payload.candidate_count,
+            "system_prompt_template_id": payload.system_prompt_template_id,
             "card_ids": [c.id for c in cards],
         },
     )
@@ -332,8 +377,8 @@ async def generate_continue(
             async for delta in client.chat_completion_stream(
                 messages,
                 model=config.model,
-                depth="auto",
-                user_params={"temperature": payload.temperature, "max_tokens": DEFAULT_MAX_TOKENS},
+                depth=depth,
+                user_params={"temperature": temperature, "max_tokens": max_tokens},
                 context_length=sum(len(m["content"]) for m in messages),
                 knowledge_card_count=len(cards),
             ):
@@ -392,7 +437,38 @@ async def generate_rewrite(
         if style_card is not None and style_card.project_id == chapter.project_id:
             cards.insert(0, style_card)
     style = _style_card(cards, payload.style_card_id)
-    messages = _build_rewrite_messages(payload, cards, snippets_by_card, style)
+
+    # V1：解析模型配置（请求 > 项目默认 > 全局默认）与系统提示词（docs/TECHv1.md §7.1）
+    config_dict = await resolve_model_config(
+        db, chapter.project_id, payload.request_model_config
+    )
+    depth = config_dict.get("depth", "auto")
+    temperature = config_dict.get("temperature", payload.temperature)
+    max_tokens = config_dict.get("max_tokens", DEFAULT_MAX_TOKENS)
+
+    context = await build_context_for_prompt(
+        db,
+        project_id=chapter.project_id,
+        chapter_id=chapter.id,
+        knowledge_cards=cards,
+        style_card=style,
+        user_input=payload.instruction,
+    )
+    try:
+        system_prompt = await resolve_generation_system_prompt(
+            db,
+            chapter.project_id,
+            payload.system_prompt_template_id,
+            context,
+            builtin=REWRITE_SYSTEM_PROMPT,
+        )
+    except GenerationConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    messages = _build_rewrite_messages(
+        payload, cards, snippets_by_card, style, system_prompt
+    )
 
     record = _create_record(
         project_id=chapter.project_id,
@@ -404,8 +480,11 @@ async def generate_rewrite(
             "instruction": payload.instruction,
             "style_card_id": payload.style_card_id,
             "target_words": payload.target_words,
-            "temperature": payload.temperature,
+            "temperature": temperature,
+            "depth": depth,
+            "model_config": config_dict,
             "candidate_count": payload.candidate_count,
+            "system_prompt_template_id": payload.system_prompt_template_id,
             "card_ids": [c.id for c in cards],
         },
     )
@@ -423,8 +502,8 @@ async def generate_rewrite(
             async for delta in client.chat_completion_stream(
                 messages,
                 model=config.model,
-                depth="auto",
-                user_params={"temperature": payload.temperature, "max_tokens": DEFAULT_MAX_TOKENS},
+                depth=depth,
+                user_params={"temperature": temperature, "max_tokens": max_tokens},
                 context_length=sum(len(m["content"]) for m in messages),
                 knowledge_card_count=len(cards),
             ):
