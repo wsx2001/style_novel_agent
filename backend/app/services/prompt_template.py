@@ -11,9 +11,12 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import PromptTemplate
+from ..models import AppConfig, PromptTemplate
 
 VALID_SCOPES = ("global", "project")
+
+# 系统默认「自动模板」的名称
+SYSTEM_DEFAULT_TEMPLATE_NAME = "自动模板"
 
 
 class PromptTemplateNotFound(Exception):
@@ -153,6 +156,48 @@ async def duplicate_prompt_template(
         is_system=False,
     )
     db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    return template
+
+
+async def ensure_system_default_template(db: AsyncSession) -> PromptTemplate:
+    """确保系统默认「自动模板」存在并返回（幂等，docs/TECHv1.md §5.7 启动初始化）。
+
+    - 已存在 is_system=True 且 scope=global 的模板则直接返回；
+    - 不存在则创建「自动模板」，并在全局默认提示词未设置
+      （AppConfig global_default_prompt_template_id 为空）时自动指向它。
+    """
+    from .llm.prompts import (
+        DEFAULT_SYSTEM_PROMPT_CONTENT,
+        GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY,
+    )
+
+    existing = await db.scalar(
+        select(PromptTemplate)
+        .where(
+            PromptTemplate.is_system.is_(True),
+            PromptTemplate.scope == "global",
+        )
+        .limit(1)
+    )
+    if existing is not None:
+        return existing
+
+    template = PromptTemplate(
+        name=SYSTEM_DEFAULT_TEMPLATE_NAME,
+        content=DEFAULT_SYSTEM_PROMPT_CONTENT,
+        scope="global",
+        is_system=True,
+    )
+    db.add(template)
+    await db.flush()
+
+    cfg = await db.scalar(
+        select(AppConfig).where(AppConfig.key == GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY)
+    )
+    if cfg is not None and not cfg.value:
+        cfg.value = template.id
     await db.commit()
     await db.refresh(template)
     return template

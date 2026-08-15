@@ -57,13 +57,22 @@ def _ensure_db_parent() -> None:
 
 
 async def init_db() -> None:
-    """创建所有表（幂等）并写入全局默认配置。导入 models 使所有模型注册到 Base.metadata。"""
+    """创建所有表（幂等）并写入全局默认配置与系统默认提示词模板。
+
+    导入 models 使所有模型注册到 Base.metadata；随后：
+    1) seed_default_app_configs 写入 AppConfig 全局默认记录；
+    2) ensure_system_default_template 确保系统「自动模板」存在。
+    """
     from .models import Base  # noqa: F401
 
     _ensure_db_parent()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await seed_default_app_configs()
+    async with async_session_maker() as session:
+        from .services.prompt_template import ensure_system_default_template
+
+        await ensure_system_default_template(session)
 
 
 async def seed_default_app_configs() -> None:

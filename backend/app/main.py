@@ -14,6 +14,7 @@ from .api.v1.documents import router as documents_router
 from .api.v1.export import router as export_router
 from .api.v1.generations import router as generations_router
 from .api.v1.projects import router as projects_router
+from .api.v1.prompt_templates import router as prompt_templates_router
 from .api.v1.settings import router as settings_router
 from .config import settings
 
@@ -44,6 +45,7 @@ app.include_router(documents_router)
 app.include_router(cards_router)
 app.include_router(chapters_router)
 app.include_router(conversations_router)
+app.include_router(prompt_templates_router)
 app.include_router(export_router)
 app.include_router(generations_router)
 app.include_router(settings_router)
