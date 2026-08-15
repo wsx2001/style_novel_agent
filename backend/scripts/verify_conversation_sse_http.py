@@ -1,5 +1,5 @@
 # backend/scripts/verify_conversation_sse_http.py
-"""对话消息发送 SSE HTTP 层验证脚本（docs/TECHv1.md §5.6 / §7.3）。
+"""对话消息发送 SSE HTTP 层验证脚本（docs/TECHv1.md §5.6 / §7.3；V1.1 §5.3）。
 
 运行方式（在 backend/ 下）：
     python scripts/verify_conversation_sse_http.py
@@ -8,10 +8,12 @@
 - POST /projects/{project_id}/conversations 创建对话；
 - POST /conversations/{conversation_id}/messages 触发流式回复，断言响应体为
   text/event-stream 且依次包含 start / delta×N / done 帧（前端 streamSSE 解析的格式）；
-- 流式完成后 GET /conversations/{conversation_id} 已持久化 user + assistant 两条消息；
-- 未配置 API Key 时发送消息 → 400。
+- 首次发送自动插入「模型已切换」系统消息（V1.1 §5.3，会话未配置模型时）；
+- 流式完成后 GET /conversations/{conversation_id} 已持久化
+  system（切换提示）+ user + assistant 三条消息；
+- 解析失败（无提供商）时发送消息 → 400。
 
-LLM 客户端通过 app.dependency_overrides 注入 MockClient（不发起真实网络请求）。
+LLM 解析（resolve_llm）通过替换模块属性注入 MockClient（不发起真实网络请求）。
 所有断言通过时打印 OK 汇总并以退出码 0 结束（使用临时 SQLite，不影响正式库）。
 """
 from __future__ import annotations
@@ -29,12 +31,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from app.database import get_db  # noqa: E402
-from app.models import ApiKeyConfig, AppConfig, Base, Project  # noqa: E402
-from app.services.crypto.api_key import encrypt_api_key  # noqa: E402
+from app.models import AppConfig, Base, ModelProvider, Project  # noqa: E402
 from app.services.llm.prompts import (  # noqa: E402
     GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY,
 )
@@ -95,34 +95,34 @@ async def main() -> None:
 
         from app.api.v1 import conversations as conv_module
         from app.api.v1.conversations import router as conv_router
+        from app.services.llm.resolve import NoLLMConfigError, ResolvedLLM
 
-        def override_resolve_client(config):
-            # 注入 MockClient，避免真实网络请求（resolve_client 为同步调用）
-            return "sk-mock", MockClient()
+        def make_resolved() -> ResolvedLLM:
+            provider = ModelProvider(
+                id="mock-provider", name="Mock提供商", type="custom"
+            )
+            return ResolvedLLM(
+                provider=provider,
+                provider_id=provider.id,
+                model_id="mock-model",
+                api_key="sk-mock",
+                client=MockClient(),
+            )
+
+        async def fake_resolve_llm(db, **kwargs):
+            return make_resolved()
 
         test_app = FastAPI()
         test_app.include_router(conv_router)
         test_app.dependency_overrides[get_db] = override_get_db
-        # resolve_client 在端点内直接调用（非 Depends），需替换模块属性
-        conv_module.resolve_client = override_resolve_client
+        # resolve_llm 在端点内直接调用（非 Depends），需替换模块属性
+        conv_module.resolve_llm = fake_resolve_llm
 
         async with maker() as db:
             # 写入全局默认 AppConfig + 系统「自动模板」（系统提示词渲染所需）
             db.add(AppConfig(key=GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY, value=""))
             await db.commit()
             await ensure_system_default_template(db)
-            # 全局 API Key（默认模型 mock-model；resolve_client 被覆盖，不会真正发请求）
-            db.add(
-                ApiKeyConfig(
-                    provider="custom",
-                    name="全局测试Key",
-                    encrypted_key=encrypt_api_key("sk-mock"),
-                    base_url="http://127.0.0.1:8999/v1",
-                    model="mock-model",
-                    is_default=True,
-                )
-            )
-            await db.commit()
 
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -141,7 +141,7 @@ async def main() -> None:
             conv_id = r.json()["id"]
             check("对话默认标题", r.json()["title"] == "对话A", str(r.json().get("title")))
 
-            # ---- 发送消息（SSE 流式） ----
+            # ---- 发送消息（SSE 流式；会话未配置模型 → 自动插入「模型已切换」系统消息） ----
             r = await client.post(
                 f"/api/v1/conversations/{conv_id}/messages",
                 json={"content": "你好，帮我写一段开头"},
@@ -161,26 +161,29 @@ async def main() -> None:
             done_data = next((d for e, d in frames if e == "done"), "{}")
             check("done 携带 message_id", "message_id" in done_data, done_data)
 
-            # ---- 流式完成后消息持久化 ----
+            # ---- 流式完成后消息持久化：切换提示 + user + assistant ----
             r = await client.get(f"/api/v1/conversations/{conv_id}")
             msgs = r.json().get("messages", [])
             roles = [m["role"] for m in msgs]
-            check("持久化 user + assistant 两条", roles == ["user", "assistant"], str(roles))
+            check("持久化 system+user+assistant 三条", roles == ["system", "user", "assistant"], str(roles))
+            switch_msg = msgs[0]
+            check("切换提示内容正确", switch_msg["content"] == "模型已切换为：Mock提供商 · mock-model", str(switch_msg.get("content")))
             assistant = next((m for m in msgs if m["role"] == "assistant"), {})
             check("assistant 内容为完整回复", assistant.get("content") == "你好！这是流式回复。", str(assistant.get("content"))[:40])
             check("assistant metadata 记录模型", assistant.get("metadata", {}).get("model") == "mock-model", str(assistant.get("metadata")))
+            # 会话已记住当前模型（§5.3）
+            check("会话记住当前模型", r.json().get("current_provider_id") == "mock-provider" and r.json().get("current_model_id") == "mock-model", str(r.json().get("current_model_id")))
 
-            # ---- 未配置 API Key → 400 ----
-            async with maker() as db:
-                from sqlalchemy import delete
+            # ---- 解析失败（无提供商）→ 400 ----
+            async def raise_no_config(db, **kwargs):
+                raise NoLLMConfigError("请先配置模型提供商")
 
-                await db.execute(delete(ApiKeyConfig))
-                await db.commit()
+            conv_module.resolve_llm = raise_no_config
             r = await client.post(
                 f"/api/v1/conversations/{conv_id}/messages",
                 json={"content": "应该失败"},
             )
-            check("未配 API Key 发送 400", r.status_code == 400, str(r.status_code))
+            check("无提供商发送 400", r.status_code == 400, str(r.status_code))
     finally:
         await engine.dispose()
         if os.path.exists(path):

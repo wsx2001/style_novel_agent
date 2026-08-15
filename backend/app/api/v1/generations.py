@@ -26,14 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_db
 from ...models import (
-    ApiKeyConfig,
     Chapter,
     GenerationCardLink,
     GenerationRecord,
     KnowledgeCard,
     Project,
 )
-from .llm_deps import find_api_key_config, resolve_client
 from ...schemas.generation import (
     ContinueRequest,
     GenerationRead,
@@ -58,6 +56,7 @@ from ...services.llm.prompts import (
     build_context_for_prompt,
     candidate_delimiter_list,
 )
+from ...services.llm.resolve import NoLLMConfigError, ResolvedLLM, resolve_llm
 from ...services.llm.stream import CandidateSplitter, sse_event
 from ...services.retrieval.hybrid import HybridRetriever
 
@@ -142,8 +141,7 @@ async def _select_cards(
     project_id: str,
     query_text: str,
     explicit_card_ids: list[str],
-    api_key: str,
-    config: ApiKeyConfig,
+    resolved: ResolvedLLM,
 ) -> tuple[list[KnowledgeCard], dict[str, list[str]]]:
     """加载显式卡片 + Chroma 推荐卡片，返回 (卡片列表, card_id -> 原文片段)。
 
@@ -162,7 +160,11 @@ async def _select_cards(
 
     if query_text and query_text.strip():
         try:
-            embedder = Embedder(api_key=api_key, base_url=config.base_url, model=config.model)
+            embedder = Embedder(
+                api_key=resolved.api_key,
+                base_url=resolved.provider.base_url or None,
+                model=resolved.model_id,
+            )
             retriever = HybridRetriever(embedder=embedder)
             recommended = await retriever.recommend_cards(
                 project_id,
@@ -264,8 +266,13 @@ def _create_record(
     generation_type: str,
     input_text: Optional[str],
     params: dict[str, Any],
+    provider_id: Optional[str] = None,
+    model_id: Optional[str] = None,
 ) -> GenerationRecord:
-    """构建生成记录（status=streaming）；卡片关联在调用方 flush 后添加。"""
+    """构建生成记录（status=streaming）；卡片关联在调用方 flush 后添加。
+
+    provider_id / model_id 为本次生成实际使用的提供商与模型（docs/TECHv1.1.md §4.5）。
+    """
     return GenerationRecord(
         project_id=project_id,
         chapter_id=chapter_id,
@@ -274,6 +281,8 @@ def _create_record(
         input_text=input_text,
         params_json=params,
         output_candidates=[],
+        provider_id=provider_id,
+        model_id=model_id,
     )
 
 
@@ -300,17 +309,22 @@ async def generate_continue(
         event: error   data: {"message"}                # LLM 失败/流中断
     """
     chapter = await _get_chapter_or_404(chapter_id, db)
-    config = await find_api_key_config(db, chapter.project_id)
-    if config is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先在设置中配置 API Key",
+    try:
+        resolved = await resolve_llm(
+            db,
+            project_id=chapter.project_id,
+            provider_id=payload.provider_id,
+            model_id=payload.model_id,
         )
-    api_key, client = resolve_client(config)
+    except NoLLMConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    client = resolved.client
 
     tail = chapter.content[-TAIL_CONTEXT_CHARS:]
     cards, snippets_by_card = await _select_cards(
-        db, chapter.project_id, tail, payload.card_ids, api_key, config
+        db, chapter.project_id, tail, payload.card_ids, resolved
     )
     style = _style_card(cards, None)
 
@@ -351,6 +365,8 @@ async def generate_continue(
         chapter_id=chapter.id,
         generation_type="continue",
         input_text=tail or chapter.content,
+        provider_id=resolved.provider_id,
+        model_id=resolved.model_id,
         params={
             "target_words": payload.target_words,
             "temperature": temperature,
@@ -376,7 +392,7 @@ async def generate_continue(
             yield sse_event("start", {"generation_id": record.id, "type": "continue"})
             async for delta in client.chat_completion_stream(
                 messages,
-                model=config.model,
+                model=resolved.model_id,
                 depth=depth,
                 user_params={"temperature": temperature, "max_tokens": max_tokens},
                 context_length=sum(len(m["content"]) for m in messages),
@@ -420,16 +436,21 @@ async def generate_rewrite(
 ) -> StreamingResponse:
     """重写选中段落：按段落文本检索相关卡片 → 组装 Prompt → 流式生成多候选（SSE）。"""
     chapter = await _get_chapter_or_404(chapter_id, db)
-    config = await find_api_key_config(db, chapter.project_id)
-    if config is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先在设置中配置 API Key",
+    try:
+        resolved = await resolve_llm(
+            db,
+            project_id=chapter.project_id,
+            provider_id=payload.provider_id,
+            model_id=payload.model_id,
         )
-    api_key, client = resolve_client(config)
+    except NoLLMConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    client = resolved.client
 
     cards, snippets_by_card = await _select_cards(
-        db, chapter.project_id, payload.selected_text, payload.card_ids, api_key, config
+        db, chapter.project_id, payload.selected_text, payload.card_ids, resolved
     )
     # style_card_id 可能未包含在选中/推荐卡片中：单独加载并前置
     if payload.style_card_id and not any(c.id == payload.style_card_id for c in cards):
@@ -475,6 +496,8 @@ async def generate_rewrite(
         chapter_id=chapter.id,
         generation_type="rewrite",
         input_text=payload.selected_text,
+        provider_id=resolved.provider_id,
+        model_id=resolved.model_id,
         params={
             "selected_text": payload.selected_text,
             "instruction": payload.instruction,
@@ -501,7 +524,7 @@ async def generate_rewrite(
             yield sse_event("start", {"generation_id": record.id, "type": "rewrite"})
             async for delta in client.chat_completion_stream(
                 messages,
-                model=config.model,
+                model=resolved.model_id,
                 depth=depth,
                 user_params={"temperature": temperature, "max_tokens": max_tokens},
                 context_length=sum(len(m["content"]) for m in messages),
@@ -545,22 +568,26 @@ async def generate_inspire(
 ) -> InspireResponse:
     """围绕主题生成一段小说灵感（非流式调用，返回单条文本并保存记录）。"""
     await _get_project_or_404(project_id, db)
-    config = await find_api_key_config(db, project_id)
-    if config is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先在设置中配置 API Key",
+    try:
+        resolved = await resolve_llm(
+            db,
+            project_id=project_id,
+            provider_id=payload.provider_id,
+            model_id=payload.model_id,
         )
-    _, client = resolve_client(config)
+    except NoLLMConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     messages = [
         {"role": "system", "content": INSPIRE_SYSTEM_PROMPT},
         {"role": "user", "content": INSPIRE_USER_TEMPLATE.format(idea=payload.idea)},
     ]
     try:
-        content = await client.chat_completion(
+        content = await resolved.client.chat_completion(
             messages,
-            model=config.model,
+            model=resolved.model_id,
             depth="auto",
             user_params={"temperature": payload.temperature, "max_tokens": 1024},
             context_length=sum(len(m["content"]) for m in messages),
@@ -580,6 +607,8 @@ async def generate_inspire(
         input_text=payload.idea,
         params_json={"idea": payload.idea, "temperature": payload.temperature},
         output_candidates=[content],
+        provider_id=resolved.provider_id,
+        model_id=resolved.model_id,
     )
     db.add(record)
     await db.commit()

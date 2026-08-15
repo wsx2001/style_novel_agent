@@ -20,16 +20,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...database import get_db
-from ...models import ApiKeyConfig, Document, KnowledgeCard, KnowledgeSnippet, Project
+from ...models import Document, KnowledgeCard, KnowledgeSnippet, Project
 from ...schemas.card import (
     ConfirmImportRequest,
     ConfirmImportResponse,
     SnippetChunkRead,
 )
 from ...schemas.document import CandidateCard, DocumentParseRequest, DocumentRead
-from ...services.crypto.api_key import decrypt_api_key
 from ...services.embedding.embedder import Embedder
-from ...services.llm.client import create_client
+from ...services.llm.resolve import NoLLMConfigError, resolve_embedding, resolve_llm
 from ...services.parsing.chunker import chunk_document
 from ...services.parsing.extractor import extract_candidates
 from ...services.retrieval.hybrid import HybridRetriever
@@ -148,24 +147,6 @@ async def get_document(
     return await _get_document_or_404(document_id, db)
 
 
-async def _find_api_key_config(db: AsyncSession, project_id: str) -> ApiKeyConfig | None:
-    """查找可用的 API Key 配置：优先项目级默认，其次项目级任意，再回退全局。"""
-    scoped = await db.execute(
-        select(ApiKeyConfig)
-        .where(ApiKeyConfig.project_id == project_id)
-        .order_by(ApiKeyConfig.is_default.desc(), ApiKeyConfig.created_at)
-    )
-    config = scoped.scalars().first()
-    if config is not None:
-        return config
-    global_result = await db.execute(
-        select(ApiKeyConfig)
-        .where(ApiKeyConfig.project_id.is_(None))
-        .order_by(ApiKeyConfig.is_default.desc(), ApiKeyConfig.created_at)
-    )
-    return global_result.scalars().first()
-
-
 @router.post(
     "/documents/{document_id}/parse",
     response_model=list[CandidateCard],
@@ -176,24 +157,17 @@ async def parse_document(
     payload: DocumentParseRequest,
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """读取文档 + 项目 API Key，分块调用 LLM 抽取设定，候选卡片暂存于文档记录。"""
+    """读取文档 + 解析提供商/模型，分块调用 LLM 抽取设定，候选卡片暂存于文档记录。"""
     document = await _get_document_or_404(document_id, db)
 
-    config = await _find_api_key_config(db, document.project_id)
-    if config is None:
+    try:
+        resolved = await resolve_llm(db, project_id=document.project_id)
+    except NoLLMConfigError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先在设置中配置 API Key",
-        )
-    try:
-        api_key = decrypt_api_key(config.encrypted_key)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"API Key 解密失败：{exc}",
+            detail=str(exc),
         ) from exc
-
-    client = create_client(api_key=api_key, base_url=config.base_url, model=config.model)
+    client = resolved.client
     threshold = payload.threshold or document.parse_threshold
 
     try:
@@ -264,20 +238,18 @@ async def confirm_import(
     """
     document = await _get_document_or_404(document_id, db)
 
-    # 远程 embedding：优先使用项目/全局配置的 API Key；无配置则回退本地哈希向量
+    # 远程 embedding：优先使用项目/全局解析的提供商 Key；无配置则回退本地哈希向量
     embedder = None
-    config = await _find_api_key_config(db, document.project_id)
-    if config is not None:
-        try:
-            api_key = decrypt_api_key(config.encrypted_key)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"API Key 解密失败：{exc}",
-            ) from exc
+    try:
+        provider, decrypted_key = await resolve_embedding(
+            db, project_id=document.project_id
+        )
+    except NoLLMConfigError:
+        provider, decrypted_key = None, None
+    if provider is not None and decrypted_key:
         embedder = Embedder(
-            api_key=api_key,
-            base_url=config.base_url,
+            api_key=decrypted_key,
+            base_url=provider.base_url or None,
             model=payload.embedding_model,
         )
     retriever = HybridRetriever(embedder=embedder)

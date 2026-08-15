@@ -34,6 +34,9 @@ class ProjectUpdate(BaseModel):
     # V1：项目默认模型配置 / 默认提示词模板（docs/TECHv1.md §4.2 / §5.8）
     default_model_config: Optional[dict] = None
     default_prompt_template_id: Optional[str] = None
+    # V1.1：项目默认提供商与模型（null 表示继承全局默认，docs/TECHv1.1.md §5.2）
+    default_provider_id: Optional[str] = None
+    default_model_id: Optional[str] = None
 
 
 class ProjectRead(ProjectBase):
@@ -46,5 +49,8 @@ class ProjectRead(ProjectBase):
     # V1：项目默认模型配置与默认提示词模板（docs/TECHv1.md §4.2）
     default_model_config: dict = Field(default_factory=dict)
     default_prompt_template_id: Optional[str] = None
+    # V1.1：项目默认提供商与模型（docs/TECHv1.1.md §4.3）
+    default_provider_id: Optional[str] = None
+    default_model_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime

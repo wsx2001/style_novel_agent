@@ -14,10 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_db
-from ...models import AppConfig, Project
+from ...models import AppConfig, ModelProvider, Project
 from ...schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
 from ...services.generation import GLOBAL_DEFAULT_MODEL_CONFIG_KEY
 from ...services.llm.prompts import GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY
+from ...services.llm.resolve import GLOBAL_DEFAULT_MODEL_KEY
+from ...services.model_provider import GLOBAL_DEFAULT_PROVIDER_KEY
 from ...services.prompt_template import get_prompt_template_by_id
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -53,6 +55,7 @@ async def create_project(
 ) -> Project:
     """创建项目；V1 起将全局默认模型配置复制到项目默认，全局默认模板 ID 复制到项目默认模板。
 
+    V1.1 起同时继承全局默认提供商与模型（未配置时为 None，表示生成时回退全局）。
     未配置全局默认时使用标准默认模型配置；默认提示词模板可空（生成时回退到全局）。
     """
     global_model_config = await db.scalar(
@@ -60,6 +63,12 @@ async def create_project(
     )
     global_template_id = await db.scalar(
         select(AppConfig.value).where(AppConfig.key == GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY)
+    )
+    global_provider_id = await db.scalar(
+        select(AppConfig.value).where(AppConfig.key == GLOBAL_DEFAULT_PROVIDER_KEY)
+    )
+    global_model_id = await db.scalar(
+        select(AppConfig.value).where(AppConfig.key == GLOBAL_DEFAULT_MODEL_KEY)
     )
     default_model_config = (
         dict(global_model_config)
@@ -71,6 +80,8 @@ async def create_project(
         **payload.model_dump(),
         default_model_config=default_model_config,
         default_prompt_template_id=default_prompt_template_id,
+        default_provider_id=str(global_provider_id) if global_provider_id else None,
+        default_model_id=str(global_model_id) if global_model_id else None,
     )
     db.add(project)
     await db.commit()
@@ -108,6 +119,17 @@ async def update_project(
                 )
         # 显式传 null / 空串 → 清空默认模板（生成时回退全局）
         updates["default_prompt_template_id"] = template_id or None
+    if "default_provider_id" in updates:
+        provider_id = updates["default_provider_id"]
+        if provider_id:
+            provider = await db.get(ModelProvider, provider_id)
+            if provider is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"模型提供商 {provider_id} 不存在",
+                )
+        # 显式传 null / 空串 → 清空项目默认提供商（生成时回退全局）
+        updates["default_provider_id"] = provider_id or None
     for field, value in updates.items():
         setattr(project, field, value)
     await db.commit()

@@ -33,7 +33,7 @@ DEFAULT_CONVERSATION_MODEL_CONFIG = {
 
 
 class ConversationCreate(BaseModel):
-    """创建对话请求体（docs/TECHv1.md §5.6）。"""
+    """创建对话请求体（docs/TECHv1.md §5.6；V1.1 支持当前提供商/模型）。"""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -45,6 +45,9 @@ class ConversationCreate(BaseModel):
         serialization_alias="model_config",
     )
     system_prompt_template_id: Optional[str] = None
+    # V1.1：会话当前使用的提供商与模型（不传则生成时继承项目/全局默认）
+    current_provider_id: Optional[str] = None
+    current_model_id: Optional[str] = None
 
 
 class ConversationUpdate(BaseModel):
@@ -60,6 +63,9 @@ class ConversationUpdate(BaseModel):
     )
     system_prompt_template_id: Optional[str] = None
     system_prompt_override: Optional[str] = None
+    # V1.1：会话当前使用的提供商与模型（切换后记住最后选择）
+    current_provider_id: Optional[str] = None
+    current_model_id: Optional[str] = None
 
 
 class MessageRead(BaseModel):
@@ -80,7 +86,7 @@ class MessageRead(BaseModel):
 
 
 class ConversationRead(BaseModel):
-    """对话响应体（from_attributes 直接序列化 ORM Conversation）。"""
+    """对话响应体（from_attributes 直接序列化 ORM Conversation；V1.1 含当前提供商/模型）。"""
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -95,6 +101,9 @@ class ConversationRead(BaseModel):
     )
     system_prompt_template_id: Optional[str] = None
     system_prompt_override: Optional[str] = None
+    # V1.1：会话当前使用的提供商与模型
+    current_provider_id: Optional[str] = None
+    current_model_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -106,6 +115,12 @@ class ConversationDetailRead(ConversationRead):
 
 
 class MessageSendRequest(BaseModel):
-    """发送消息请求体（POST /conversations/{id}/messages）。"""
+    """发送消息请求体（POST /conversations/{id}/messages；V1.1 支持临时指定提供商/模型）。
+
+    provider_id / model_id 用于临时指定本次生成使用的模型（§5.3，优先级最高）；
+    若与会话当前模型不同，系统自动更新会话并插入「模型已切换」系统消息。
+    """
 
     content: str = Field(..., min_length=1, max_length=20000)
+    provider_id: Optional[str] = None
+    model_id: Optional[str] = None

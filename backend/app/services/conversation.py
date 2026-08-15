@@ -17,9 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import ApiKeyConfig, Chapter, Conversation, Message, Project
-from .llm.client import LLMClient
+from ..models import Chapter, Conversation, Message, Project
 from .llm.prompts import build_context_for_prompt, get_effective_system_prompt
+from .llm.resolve import ResolvedLLM
 from .llm.stream import sse_event
 from .prompt_template import get_prompt_template_by_id
 
@@ -97,10 +97,13 @@ async def create_conversation(
     chapter_id: Optional[str] = None,
     model_config: Optional[dict] = None,
     system_prompt_template_id: Optional[str] = None,
+    current_provider_id: Optional[str] = None,
+    current_model_id: Optional[str] = None,
 ) -> Conversation:
     """创建对话；校验项目存在、章节归属、模板存在性。
 
-    model_config 缺省时由模型列默认值填充（{"depth": "auto", "temperature": 0.7, "max_tokens": 2048}）。
+    model_config 缺省时由模型列默认值填充（{"depth": "auto", "temperature": 0.7, "max_tokens": 2048}）；
+    current_provider_id / current_model_id（V1.1）可指定会话当前模型，不传则生成时回退项目/全局默认。
     """
     project = await db.get(Project, project_id)
     if project is None:
@@ -118,6 +121,10 @@ async def create_conversation(
     }
     if model_config is not None:
         kwargs["model_config"] = model_config
+    if current_provider_id is not None:
+        kwargs["current_provider_id"] = current_provider_id
+    if current_model_id is not None:
+        kwargs["current_model_id"] = current_model_id
     conversation = Conversation(**kwargs)
     db.add(conversation)
     await db.commit()
@@ -132,6 +139,8 @@ async def update_conversation(
     model_config: Optional[dict] = None,
     system_prompt_template_id: Optional[str] = None,
     system_prompt_override: Optional[str] = None,
+    current_provider_id: Optional[str] = None,
+    current_model_id: Optional[str] = None,
 ) -> Conversation:
     """更新对话（None 参数表示不修改）；替换系统提示词模板时校验其存在性。"""
     conversation = await _get_conversation(db, conversation_id)
@@ -144,6 +153,10 @@ async def update_conversation(
         conversation.system_prompt_template_id = system_prompt_template_id
     if system_prompt_override is not None:
         conversation.system_prompt_override = system_prompt_override
+    if current_provider_id is not None:
+        conversation.current_provider_id = current_provider_id
+    if current_model_id is not None:
+        conversation.current_model_id = current_model_id
     await db.commit()
     await db.refresh(conversation)
     return conversation
@@ -171,8 +184,7 @@ async def send_message(
     conversation_id: str,
     user_input: str,
     *,
-    client: LLMClient,
-    config: ApiKeyConfig,
+    resolved: ResolvedLLM,
 ) -> AsyncIterator[str]:
     """流式对话：渲染系统提示词 → 组装消息 → 调用 LLM → 持久化 → 产出 SSE 帧。
 
@@ -182,13 +194,34 @@ async def send_message(
         event: done   data: {"message_id": "..."}   # assistant 消息 id（流式完成后保存完整内容）
         event: error  data: {"message": "..."}      # LLM 失败（不落 assistant 消息）
 
-    流程：加载对话与最近 20 条历史 → build_context_for_prompt 渲染系统提示词
-    （占位符替换见 llm/prompts.py）→ 组装 [system, ...history[-20:], user] →
-    client.chat_completion_stream（思维深度映射见 llm/client.py，depth 取自
-    conversation.model_config）→ 先持久化 user 消息，流式结束后持久化 assistant 消息。
+    流程：加载对话 →（V1.1）若解析出的提供商/模型与会话当前不同，更新会话
+    current_provider_id/current_model_id 并插入「模型已切换」系统消息（§5.3，
+    该消息作为历史消息发送给模型）→ 加载最近 20 条历史 →
+    build_context_for_prompt 渲染系统提示词 → 组装 [system, ...history[-20:], user] →
+    resolved.client.chat_completion_stream（思维深度映射见 llm/client.py，
+    depth 取自 conversation.model_config）→ 先持久化 user 消息，
+    流式结束后持久化 assistant 消息。
     对话不存在抛 ConversationNotFound（调用方应在进入流式前先校验）。
     """
     conversation = await _get_conversation(db, conversation_id)
+
+    # V1.1：解析出的提供商/模型与会话当前不同 → 更新会话并插入切换提示
+    if (
+        conversation.current_provider_id != resolved.provider_id
+        or conversation.current_model_id != resolved.model_id
+    ):
+        conversation.current_provider_id = resolved.provider_id
+        conversation.current_model_id = resolved.model_id
+        db.add(
+            Message(
+                conversation_id=conversation_id,
+                role="system",
+                content=f"模型已切换为：{resolved.provider.name} · {resolved.model_id}",
+                message_metadata={"model": resolved.model_id},
+            )
+        )
+        await db.flush()
+
     history = await get_messages(db, conversation_id)
     history = history[-HISTORY_LIMIT:]
 
@@ -229,9 +262,9 @@ async def send_message(
     # 流式调用 LLM（不生成多候选，单回复）
     parts: list[str] = []
     try:
-        async for delta in client.chat_completion_stream(
+        async for delta in resolved.client.chat_completion_stream(
             messages,
-            model=config.model,
+            model=resolved.model_id,
             depth=depth,
             user_params={"temperature": temperature, "max_tokens": max_tokens},
             context_length=sum(len(m["content"]) for m in messages),
@@ -251,7 +284,7 @@ async def send_message(
         conversation_id=conversation_id,
         role="assistant",
         content="".join(parts),
-        message_metadata={"model": config.model, "depth": depth},
+        message_metadata={"model": resolved.model_id, "depth": depth},
     )
     db.add(assistant_msg)
     await db.commit()

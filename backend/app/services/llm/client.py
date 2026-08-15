@@ -133,5 +133,5 @@ class LLMClient:
 def create_client(
     api_key: str, base_url: str, model: Optional[str] = None
 ) -> LLMClient:
-    """AsyncOpenAI 客户端工厂：按 ApiKeyConfig 动态构造。"""
+    """AsyncOpenAI 客户端工厂：按解析出的提供商 Key / base_url / 模型动态构造。"""
     return LLMClient(api_key=api_key, base_url=base_url, model=model)

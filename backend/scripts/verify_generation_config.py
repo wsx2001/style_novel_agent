@@ -1,18 +1,19 @@
 # backend/scripts/verify_generation_config.py
-"""续写/重写 model_config 与提示词模板验证脚本（docs/TECHv1.md §5.5 / §7.1 / §7.2）。
+"""续写/重写 model_config 与提示词模板验证脚本（docs/TECHv1.md §5.5 / §7.1 / §7.2；V1.1 §5.4）。
 
 运行方式（在 backend/ 下）：
     python scripts/verify_generation_config.py
 
 覆盖：
 - schema：ContinueRequest / RewriteRequest 接受 model_config 键（别名）与
-  system_prompt_template_id，缺省 None；
+  system_prompt_template_id、provider_id/model_id，缺省 None；
 - resolve_model_config 优先级：请求 > 项目默认 > 全局默认；
 - resolve_generation_system_prompt 优先级：请求模板 > 项目默认 > 全局默认 > 内置兜底，
   以及模板不存在 / 跨项目模板报错；
 - 续写/重写 API（ASGI 驱动 + Mock LLM 客户端）：
   请求的 model_config 生效（depth/temperature/max_tokens 透传 LLM）、
-  系统提示词渲染占位符、SSE 流式（start/delta/done）正常；
+  系统提示词渲染占位符、SSE 流式（start/delta/done）正常、
+  生成记录记录实际提供商/模型（provider_id/model_id）；
 - 错误路径：请求模板不存在 / 跨项目模板 → 400。
 所有断言通过时打印 OK 汇总并以退出码 0 结束（使用临时 SQLite，不影响正式库）。
 """
@@ -36,11 +37,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 
 from app.database import get_db  # noqa: E402
 from app.models import (  # noqa: E402
-    ApiKeyConfig,
     AppConfig,
     Base,
     Chapter,
     KnowledgeCard,
+    ModelProvider,
     Project,
     PromptTemplate,
 )
@@ -81,16 +82,20 @@ class MockLLMClient:
 
 
 def test_schemas() -> None:
-    print("[1] schema 新字段（model_config 别名 / system_prompt_template_id）")
+    print("[1] schema 新字段（model_config 别名 / system_prompt_template_id / provider_id/model_id）")
     req = ContinueRequest.model_validate({
         "prompt": "写激烈一些",
         "model_config": {"depth": "high", "temperature": 0.5, "max_tokens": 4096},
         "system_prompt_template_id": "tpl1",
+        "provider_id": "p1",
+        "model_id": "gpt-4o",
     })
     check("continue 接受 model_config 键", req.request_model_config == {"depth": "high", "temperature": 0.5, "max_tokens": 4096}, str(req.request_model_config))
     check("continue system_prompt_template_id", req.system_prompt_template_id == "tpl1")
+    check("continue provider_id/model_id 透传", req.provider_id == "p1" and req.model_id == "gpt-4o", str(req.provider_id))
     check("continue 缺省 model_config=None", ContinueRequest.model_validate({}).request_model_config is None)
     check("continue 缺省 template=None", ContinueRequest.model_validate({}).system_prompt_template_id is None)
+    check("continue 缺省 provider/model=None", ContinueRequest.model_validate({}).provider_id is None and ContinueRequest.model_validate({}).model_id is None)
 
     rw = RewriteRequest.model_validate({"selected_text": "段落", "model_config": {"depth": "medium"}})
     check("rewrite 接受 model_config", rw.request_model_config == {"depth": "medium"}, str(rw.request_model_config))
@@ -190,11 +195,6 @@ async def test_generation_api(client: AsyncClient, maker, mock_client: MockLLMCl
         )
         other_tpl = PromptTemplate(name="别人的模板", content="别人的", scope="project", project_id=other.id)
         db.add_all([tpl, other_tpl])
-        cfg = ApiKeyConfig(
-            project_id=proj.id, provider="mock", name="t", encrypted_key="x",
-            base_url="http://mock", model="mock-model", is_default=True,
-        )
-        db.add(cfg)
         await db.commit()
         ids = {"proj": proj.id, "chap": chap.id, "style": style.id, "tpl": tpl.id, "other_tpl": other_tpl.id}
 
@@ -281,6 +281,23 @@ async def test_generation_api(client: AsyncClient, maker, mock_client: MockLLMCl
     _, kwargs = mock_client.calls[0]
     check("重写缺省回退项目默认", kwargs["depth"] == "medium" and kwargs["user_params"]["temperature"] == 0.6, str(kwargs.get("user_params")))
 
+    # ---- 生成记录记录实际提供商/模型（V1.1 §4.5） ----
+    from app.models import GenerationRecord
+
+    async with maker() as db:
+        rec = (
+            await db.execute(
+                select(GenerationRecord)
+                .where(GenerationRecord.project_id == ids["proj"])
+                .order_by(GenerationRecord.created_at.desc())
+            )
+        ).scalars().first()
+        check(
+            "生成记录记录提供商/模型",
+            rec is not None and rec.provider_id == "mock-provider" and rec.model_id == "mock-model",
+            f"{rec.provider_id if rec else None}/{rec.model_id if rec else None}",
+        )
+
 
 async def main() -> None:
     test_schemas()
@@ -304,19 +321,27 @@ async def main() -> None:
         calls: list = []
         mock_client = MockLLMClient(calls)
 
-        def fake_resolve_client(config):
-            return "sk-test", mock_client
+        async def fake_resolve_llm(db, **kwargs):
+            from app.services.llm.resolve import ResolvedLLM
 
-        async def fake_select_cards(db, project_id, query_text, explicit_card_ids, api_key, config):
+            provider = ModelProvider(id="mock-provider", name="Mock", type="custom")
+            return ResolvedLLM(
+                provider=provider,
+                provider_id=provider.id,
+                model_id="mock-model",
+                api_key="sk-test",
+                client=mock_client,
+            )
+
+        async def fake_select_cards(db, project_id, query_text, explicit_card_ids, resolved):
             result = await db.execute(
                 select(KnowledgeCard).where(KnowledgeCard.project_id == project_id)
             )
             cards = list(result.scalars().all())
             return cards, {c.id: [] for c in cards}
 
-        # 替换模块级依赖：find_api_key_config 保持真实（需要 ApiKeyConfig 行），
-        # resolve_client 与 _select_cards 打桩避免真实网络调用
-        generations_mod.resolve_client = fake_resolve_client
+        # 替换模块级依赖：resolve_llm 与 _select_cards 打桩避免真实网络调用
+        generations_mod.resolve_llm = fake_resolve_llm
         generations_mod._select_cards = fake_select_cards
 
         test_app = FastAPI()

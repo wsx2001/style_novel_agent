@@ -40,6 +40,9 @@ class ContinueRequest(BaseModel):
         serialization_alias="model_config",
     )
     system_prompt_template_id: Optional[str] = None
+    # V1.1：本次生成临时指定的提供商与模型（§5.4，优先级最高；不传则回退会话/项目/全局）
+    provider_id: Optional[str] = None
+    model_id: Optional[str] = None
 
 
 class RewriteRequest(BaseModel):
@@ -60,17 +63,22 @@ class RewriteRequest(BaseModel):
         serialization_alias="model_config",
     )
     system_prompt_template_id: Optional[str] = None
+    # V1.1：本次生成临时指定的提供商与模型（§5.4，优先级最高；不传则回退会话/项目/全局）
+    provider_id: Optional[str] = None
+    model_id: Optional[str] = None
 
 
 class InspireRequest(BaseModel):
-    """灵感生成请求体（简单实现，docs/TECH.md §5.5）。"""
+    """灵感生成请求体（简单实现，docs/TECH.md §5.5；V1.1 支持临时指定提供商/模型）。"""
 
     idea: str = Field(..., min_length=1, max_length=500)
     temperature: float = Field(default=0.9, ge=0.0, le=2.0)
+    provider_id: Optional[str] = None
+    model_id: Optional[str] = None
 
 
 class GenerationRead(BaseModel):
-    """生成记录响应体（含 id / 时间戳 / 候选文本）。"""
+    """生成记录响应体（含 id / 时间戳 / 候选文本；V1.1 起含实际使用的提供商与模型）。"""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -83,6 +91,9 @@ class GenerationRead(BaseModel):
     params_json: dict
     output_candidates: list[str]
     selected_output: Optional[str]
+    # V1.1：本次生成实际使用的提供商与模型（docs/TECHv1.1.md §4.5）
+    provider_id: Optional[str] = None
+    model_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

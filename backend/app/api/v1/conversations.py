@@ -33,7 +33,7 @@ from ...services.conversation import (
     ConversationValidationError,
     ProjectNotFound,
 )
-from .llm_deps import find_api_key_config, resolve_client
+from ...services.llm.resolve import NoLLMConfigError, resolve_llm
 
 router = APIRouter(prefix="/api/v1", tags=["conversations"])
 
@@ -164,10 +164,12 @@ async def send_message(
     payload: MessageSendRequest,
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """发送用户消息并触发 AI 流式回复（docs/TECHv1.md §7.3）。
+    """发送用户消息并触发 AI 流式回复（docs/TECHv1.md §7.3 / TECHv1.1.md §5.3）。
 
-    进入流式前完成对话存在性与 API Key 校验，错误以 HTTP 状态返回；
+    进入流式前完成对话存在性与模型解析（§7.2 链：请求 provider_id/model_id
+    > 会话当前 > 项目默认 > 全局默认），错误以 HTTP 状态返回；
     流式开始后的 LLM 失败以 SSE error 事件下发。
+    切换模型时由服务层更新会话当前模型并插入「模型已切换」系统消息。
     """
     try:
         conversation = await conversation_service.get_conversation(db, conversation_id)
@@ -175,21 +177,25 @@ async def send_message(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    config = await find_api_key_config(db, conversation.project_id)
-    if config is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先在设置中配置 API Key",
+    try:
+        resolved = await resolve_llm(
+            db,
+            conversation=conversation,
+            project_id=conversation.project_id,
+            provider_id=payload.provider_id,
+            model_id=payload.model_id,
         )
-    _, client = resolve_client(config)
+    except NoLLMConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     async def event_stream():
         async for frame in conversation_service.send_message(
             db,
             conversation_id,
             payload.content,
-            client=client,
-            config=config,
+            resolved=resolved,
         ):
             yield frame
 
