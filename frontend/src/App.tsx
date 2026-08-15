@@ -5,6 +5,7 @@ import ProjectWorkspace from '@/pages/ProjectWorkspace'
 import KnowledgeBase from '@/pages/KnowledgeBase'
 import DocumentParse from '@/pages/DocumentParse'
 import ChapterEditor from '@/pages/ChapterEditor'
+import ConversationWorkspace from '@/pages/ConversationWorkspace'
 import Settings from '@/pages/Settings'
 
 /**
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="chapters" element={<ChapterEditor />} />
           <Route path="documents" element={<DocumentParse />} />
           <Route path="knowledge" element={<KnowledgeBase />} />
+          <Route path="conversation" element={<ConversationWorkspace />} />
           <Route path="settings" element={<Settings />} />
         </Route>
 

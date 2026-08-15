@@ -13,6 +13,7 @@ const TABS = [
   { path: 'chapters', label: '章节', icon: '📝' },
   { path: 'documents', label: '文档', icon: '📄' },
   { path: 'knowledge', label: '知识库', icon: '🗂️' },
+  { path: 'conversation', label: '对话', icon: '💬' },
   { path: 'settings', label: '设置', icon: '⚙️' },
 ]
 
@@ -52,7 +53,7 @@ export default function ProjectWorkspace() {
   })
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex h-full flex-col">
       {/* 顶栏：项目名 + 模型/提示词设置 + 导出 */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card px-4">
         <h1 className="truncate text-sm font-semibold text-foreground">{project?.title ?? '…'}</h1>
