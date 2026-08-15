@@ -1,8 +1,8 @@
 # backend/app/api/v1/projects.py
-"""项目 CRUD API（docs/TECH.md §5.1）。
+"""项目 CRUD API（docs/TECH.md §5.1；V1 创建时继承全局默认，docs/TECHv1.md §5.8）。
 
 - GET    /api/v1/projects             项目列表（按创建时间倒序）
-- POST   /api/v1/projects             创建项目
+- POST   /api/v1/projects             创建项目（继承全局默认模型配置与提示词模板）
 - GET    /api/v1/projects/{id}        项目详情
 - PATCH  /api/v1/projects/{id}        更新项目
 - DELETE /api/v1/projects/{id}        删除项目（级联删除关联数据）
@@ -14,10 +14,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_db
-from ...models import Project
+from ...models import AppConfig, Project
 from ...schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
+from ...services.generation import GLOBAL_DEFAULT_MODEL_CONFIG_KEY
+from ...services.llm.prompts import GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
+
+# 项目默认模型配置（全局未配置时的兜底值，与模型列默认一致）
+DEFAULT_PROJECT_MODEL_CONFIG = {
+    "depth": "auto",
+    "temperature": 0.7,
+    "max_tokens": 2048,
+}
 
 
 async def _get_project_or_404(project_id: str, db: AsyncSession) -> Project:
@@ -41,7 +50,27 @@ async def list_projects(db: AsyncSession = Depends(get_db)) -> list[Project]:
 async def create_project(
     payload: ProjectCreate, db: AsyncSession = Depends(get_db)
 ) -> Project:
-    project = Project(**payload.model_dump())
+    """创建项目；V1 起将全局默认模型配置复制到项目默认，全局默认模板 ID 复制到项目默认模板。
+
+    未配置全局默认时使用标准默认模型配置；默认提示词模板可空（生成时回退到全局）。
+    """
+    global_model_config = await db.scalar(
+        select(AppConfig.value).where(AppConfig.key == GLOBAL_DEFAULT_MODEL_CONFIG_KEY)
+    )
+    global_template_id = await db.scalar(
+        select(AppConfig.value).where(AppConfig.key == GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY)
+    )
+    default_model_config = (
+        dict(global_model_config)
+        if isinstance(global_model_config, dict) and global_model_config
+        else dict(DEFAULT_PROJECT_MODEL_CONFIG)
+    )
+    default_prompt_template_id = str(global_template_id) if global_template_id else None
+    project = Project(
+        **payload.model_dump(),
+        default_model_config=default_model_config,
+        default_prompt_template_id=default_prompt_template_id,
+    )
     db.add(project)
     await db.commit()
     await db.refresh(project)
