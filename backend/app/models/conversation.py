@@ -22,6 +22,12 @@ class Conversation(Base, TimestampMixin):
     system_prompt_template_id: Mapped[Optional[str]] = mapped_column(ForeignKey("prompt_templates.id", ondelete="SET NULL"), nullable=True)
     system_prompt_override: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 会话级临时覆盖
 
+    # V1.1 新增：会话当前使用的提供商与模型（切换模型时更新，用于记住最后选择）
+    current_provider_id: Mapped[Optional[str]] = mapped_column(ForeignKey("model_providers.id", ondelete="SET NULL"), nullable=True)
+    current_model_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    current_provider: Mapped[Optional["ModelProvider"]] = relationship()
+
     project: Mapped[Project] = relationship(back_populates="conversations")
     chapter: Mapped[Optional[Chapter]] = relationship()
     messages: Mapped[list["Message"]] = relationship(
