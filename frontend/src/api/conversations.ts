@@ -66,15 +66,15 @@ function buildCreateBody(payload: ConversationCreate): Record<string, unknown> {
   return body
 }
 
-/** 前端 camelCase 更新参数 → 后端 snake_case 请求体（仅显式传入的字段） */
+/** 前端 camelCase 更新参数 → 后端 snake_case 请求体（仅显式传入的字段，null 用于清空） */
 function buildUpdateBody(payload: ConversationUpdate): Record<string, unknown> {
   const body: Record<string, unknown> = {}
-  if (payload.title != null) body.title = payload.title
+  if (payload.title !== undefined) body.title = payload.title
   if (payload.modelConfig) body.model_config = toModelConfigWire(payload.modelConfig)
-  if (payload.systemPromptTemplateId != null) {
+  if (payload.systemPromptTemplateId !== undefined) {
     body.system_prompt_template_id = payload.systemPromptTemplateId
   }
-  if (payload.systemPromptOverride != null) body.system_prompt_override = payload.systemPromptOverride
+  if (payload.systemPromptOverride !== undefined) body.system_prompt_override = payload.systemPromptOverride
   return body
 }
 

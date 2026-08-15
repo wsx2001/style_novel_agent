@@ -31,14 +31,20 @@ class ProjectUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = None
     genre: Optional[str] = None
+    # V1：项目默认模型配置 / 默认提示词模板（docs/TECHv1.md §4.2 / §5.8）
+    default_model_config: Optional[dict] = None
+    default_prompt_template_id: Optional[str] = None
 
 
 class ProjectRead(ProjectBase):
-    """项目响应体（含 id / 时间戳 / cover_path）。"""
+    """项目响应体（含 id / 时间戳 / cover_path；V1 起含默认模型配置与默认模板）。"""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     cover_path: Optional[str] = None
+    # V1：项目默认模型配置与默认提示词模板（docs/TECHv1.md §4.2）
+    default_model_config: dict = Field(default_factory=dict)
+    default_prompt_template_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime

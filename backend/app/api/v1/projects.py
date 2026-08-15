@@ -18,6 +18,7 @@ from ...models import AppConfig, Project
 from ...schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
 from ...services.generation import GLOBAL_DEFAULT_MODEL_CONFIG_KEY
 from ...services.llm.prompts import GLOBAL_DEFAULT_PROMPT_TEMPLATE_KEY
+from ...services.prompt_template import get_prompt_template_by_id
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -90,7 +91,24 @@ async def update_project(
 ) -> Project:
     project = await _get_project_or_404(project_id, db)
     # exclude_unset：仅更新请求体显式传入的字段，未传字段保持不变
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "default_prompt_template_id" in updates:
+        template_id = updates["default_prompt_template_id"]
+        if template_id:
+            template = await get_prompt_template_by_id(db, template_id)
+            if template is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"提示词模板 {template_id} 不存在",
+                )
+            if template.scope == "project" and template.project_id != project_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="该模板是其他项目的项目模板，不能设为当前项目的默认模板",
+                )
+        # 显式传 null / 空串 → 清空默认模板（生成时回退全局）
+        updates["default_prompt_template_id"] = template_id or None
+    for field, value in updates.items():
         setattr(project, field, value)
     await db.commit()
     await db.refresh(project)

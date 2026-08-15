@@ -5,6 +5,8 @@ import { getErrorMessage } from '@/api/client'
 import { projectsApi, type ExportFormat } from '@/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
+import ModelPromptSettings from '@/components/settings/ModelPromptSettings'
+import { useSettingsPanelStore } from '@/store/settingsPanel'
 
 /** 项目内子导航：章节 / 文档 / 知识库 / 设置 */
 const TABS = [
@@ -43,16 +45,25 @@ export default function ProjectWorkspace() {
     enabled: !!projectId,
   })
 
+  const togglePanel = useSettingsPanelStore((s) => s.togglePanel)
+
   const exportMutation = useMutation({
     mutationFn: (format: ExportFormat) => projectsApi.exportFile(projectId!, format),
   })
 
   return (
     <div className="flex min-h-full flex-col">
-      {/* 顶栏：项目名 + 导出 */}
+      {/* 顶栏：项目名 + 模型/提示词设置 + 导出 */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card px-4">
         <h1 className="truncate text-sm font-semibold text-foreground">{project?.title ?? '…'}</h1>
         <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            className="rounded-md border border-border px-2 py-1 text-xs font-medium text-slate-600 hover:border-primary/50 hover:text-primary"
+            onClick={togglePanel}
+            title="模型/提示词设置（项目默认）"
+          >
+            ⚙ 模型/提示词设置
+          </button>
           <span className="text-xs text-slate-400">导出</span>
           {EXPORT_OPTIONS.map((opt) => (
             <button
@@ -102,6 +113,9 @@ export default function ProjectWorkspace() {
           <Outlet />
         </div>
       </div>
+
+      {/* 项目模型/提示词设置抽屉 */}
+      <ModelPromptSettings scope="project" projectId={projectId} />
     </div>
   )
 }

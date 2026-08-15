@@ -4,6 +4,8 @@ import { settingsApi } from '@/api/settings'
 import { getErrorMessage } from '@/api/client'
 import { cn } from '@/lib/utils'
 import type { ApiKeyConfig, ApiProvider } from '@/types'
+import ModelPromptSettings from '@/components/settings/ModelPromptSettings'
+import { useSettingsPanelStore } from '@/store/settingsPanel'
 
 /** 常见提供商的默认 base_url（选择时自动填充） */
 const PROVIDER_PRESETS: Record<Exclude<ApiProvider, 'custom'>, string> = {
@@ -39,6 +41,8 @@ export default function Settings() {
   const [model, setModel] = useState('')
   const [isDefault, setIsDefault] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const togglePanel = useSettingsPanelStore((s) => s.togglePanel)
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -83,6 +87,24 @@ export default function Settings() {
           配置 API Key（AES-GCM 加密存储，不暴露明文），供文档解析、embedding 与 AI 生成使用
         </p>
       </header>
+
+      {/* 模型/提示词设置（全局默认） */}
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">模型 / 提示词设置</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              配置全局默认思维深度、随机性、最大输出长度与系统提示词模板；新创建的项目会继承这些默认值。
+            </p>
+          </div>
+          <button
+            className="shrink-0 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
+            onClick={togglePanel}
+          >
+            ⚙ 打开设置面板
+          </button>
+        </div>
+      </section>
 
       {/* 已配置的 Key */}
       <section className="rounded-xl border border-border bg-card">
@@ -203,6 +225,9 @@ export default function Settings() {
           </button>
         </div>
       </section>
+
+      {/* 全局模型/提示词设置抽屉 */}
+      <ModelPromptSettings scope="global" />
     </div>
   )
 }

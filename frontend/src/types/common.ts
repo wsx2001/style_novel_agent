@@ -37,6 +37,9 @@ export interface ModelConfig {
   maxTokens?: number
 }
 
+/** 模型/提示词设置面板作用范围（docs/TECHv1.md §5.8 / PRDv1 §1.2 §2.2） */
+export type SettingsPanelScope = 'global' | 'project' | 'conversation'
+
 /** API 提供商 */
 export type ApiProvider = 'openai' | 'deepseek' | 'kimi' | 'moonshot' | 'custom'
 

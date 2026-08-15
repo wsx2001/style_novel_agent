@@ -50,6 +50,8 @@ export interface ConversationCreate {
 export interface ConversationUpdate {
   title?: string
   modelConfig?: Partial<ModelConfig>
-  systemPromptTemplateId?: string
-  systemPromptOverride?: string
+  /** 当前会话使用的提示词模板 ID；显式传 null 表示清空（回退项目/全局默认） */
+  systemPromptTemplateId?: string | null
+  /** 会话级临时覆盖（仅本会话生效）；显式传 null 表示清除覆盖 */
+  systemPromptOverride?: string | null
 }
