@@ -30,10 +30,20 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIR: str = "./data/chroma"
     FRONTEND_DIST: str = "../frontend/dist"  # 前端构建产物（不存在则不挂载）
 
+    # 日志
+    LOG_DIR: str = "./data/logs"
+    LOG_LEVEL: str = "INFO"  # 控制台与 app.log 的最低级别；error.log 恒为 ERROR+
+    LOG_MAX_BYTES: int = 5 * 1024 * 1024  # 单日志文件超过 5MB 滚动
+    LOG_BACKUP_COUNT: int = 5  # 保留 5 份滚动备份
+
     # ---- 便捷属性（Path 形式，供业务代码使用）----
     @property
     def data_dir(self) -> Path:
         return Path(self.DATA_DIR)
+
+    @property
+    def log_dir(self) -> Path:
+        return Path(self.LOG_DIR)
 
     @property
     def chroma_persist_dir(self) -> Path:

@@ -3,9 +3,10 @@
 职责：
 1. 切换到 backend 目录（保证 ./data、sqlite:///./data/... 等相对路径稳定）；
 2. 检查并创建数据目录；
-3. 初始化数据库表（幂等）；
-4. 启动 Uvicorn 监听 HOST:PORT；
-5. 自动打开默认浏览器。
+3. 初始化日志（落盘 data/logs/）；
+4. 初始化数据库表（幂等）；
+5. 启动 Uvicorn 监听 HOST:PORT；
+6. 自动打开默认浏览器。
 
 用法（在 backend/ 下）：
     python start.py
@@ -13,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import threading
@@ -35,13 +37,16 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.config import settings  # noqa: E402
 from app.database import engine, init_db  # noqa: E402
+from app.logging_config import setup_logging  # noqa: E402
+
+logger = logging.getLogger("app.main")
 
 
 def prepare_data_dirs() -> Path:
-    """检查并创建数据目录：DATA_DIR 下含 chroma / documents / exports。"""
+    """检查并创建数据目录：DATA_DIR 下含 chroma / documents / exports / logs。"""
     data_dir = Path(settings.DATA_DIR)
     data_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("chroma", "documents", "exports"):
+    for name in ("chroma", "documents", "exports", "logs"):
         (data_dir / name).mkdir(parents=True, exist_ok=True)
     return data_dir
 
@@ -54,10 +59,13 @@ async def _init_database() -> None:
 
 def main() -> None:
     data_dir = prepare_data_dirs()
-    print(f"[FictionForge] 数据目录: {data_dir}")
+
+    # 日志配置在打印前完成：后续 print/日志全部落盘
+    log_dir = setup_logging()
+    logger.info("FictionForge 启动：数据目录=%s，日志目录=%s", data_dir, log_dir)
 
     asyncio.run(_init_database())
-    print("[FictionForge] 数据库初始化完成")
+    logger.info("数据库初始化完成")
 
     host, port = settings.HOST, settings.PORT
     if host in ("0.0.0.0", "::"):
@@ -67,11 +75,17 @@ def main() -> None:
 
     # 等服务真正监听后再打开浏览器
     threading.Timer(1.5, webbrowser.open, args=(url,)).start()
-    print(f"[FictionForge] 服务启动中: {url}（按 Ctrl+C 停止）")
+    logger.info("服务启动中：%s（按 Ctrl+C 停止）", url)
 
     import uvicorn
 
-    uvicorn.run("app.main:app", host=host, port=port, reload=False)
+    # log_config=None：让 uvicorn 复用上方日志配置，访问日志一并落盘 app.log
+    uvicorn.run("app.main:app", host=host, port=port, reload=False, log_config=None)
+
+
+if __name__ == "__main__":
+    main()
+
 
 
 if __name__ == "__main__":
