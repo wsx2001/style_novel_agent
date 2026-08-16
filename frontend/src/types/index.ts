@@ -4,6 +4,7 @@
  */
 export * from './common'
 export * from './project'
+export * from './modelProvider'
 export * from './document'
 export * from './card'
 export * from './chapter'

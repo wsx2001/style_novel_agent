@@ -12,6 +12,9 @@ export interface GenerationRecord extends Timestamped {
   /** 候选文本列表（一次生成 2-3 个候选） */
   output_candidates: string[]
   selected_output: string | null
+  /** V1.1：本次生成实际使用的提供商与模型（docs/TECHv1.1.md §4.5） */
+  provider_id: string | null
+  model_id: string | null
 }
 
 /** 生成参数（续写 / 重写 / 灵感 / 大纲 通用字段） */

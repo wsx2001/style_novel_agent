@@ -22,7 +22,15 @@ class ProjectBase(BaseModel):
 
 
 class ProjectCreate(ProjectBase):
-    """创建项目请求体。"""
+    """创建项目请求体。
+
+    V1.1：default_provider_id / default_model_id 可选，未传时继承全局默认
+    （docs/TECHv1.1.md §5.2）；显式传 null 表示不继承（生成时回退全局）。
+    """
+
+    # V1.1：创建时可选指定项目默认提供商与模型（docs/TECHv1.1.md §5.2）
+    default_provider_id: Optional[str] = None
+    default_model_id: Optional[str] = None
 
 
 class ProjectUpdate(BaseModel):

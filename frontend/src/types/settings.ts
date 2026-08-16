@@ -53,10 +53,18 @@ export interface GlobalAppSettings {
   global_default_model_config: Record<string, unknown>
   /** 全局默认提示词模板 ID（空串表示未设置） */
   global_default_prompt_template_id: string
+  /** V1.1：全局默认提供商 ID（空串表示未设置，docs/TECHv1.1.md §4.6） */
+  global_default_provider_id: string
+  /** V1.1：全局默认模型 ID（空串表示未设置） */
+  global_default_model_id: string
 }
 
 /** 更新全局设置请求体（所有字段可选，仅显式传入的字段生效） */
 export interface GlobalAppSettingsUpdate {
   global_default_model_config?: Record<string, unknown>
   global_default_prompt_template_id?: string
+  /** V1.1：全局默认提供商 ID（传空串表示清除） */
+  global_default_provider_id?: string
+  /** V1.1：全局默认模型 ID（传空串表示清除） */
+  global_default_model_id?: string
 }

@@ -1,232 +1,79 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { settingsApi } from '@/api/settings'
-import { getErrorMessage } from '@/api/client'
 import { cn } from '@/lib/utils'
-import type { ApiKeyConfig, ApiProvider } from '@/types'
+import ModelProviderManagement from '@/components/settings/ModelProviderManagement'
 import ModelPromptSettings from '@/components/settings/ModelPromptSettings'
 import { useSettingsPanelStore } from '@/store/settingsPanel'
 
-/** 常见提供商的默认 base_url（选择时自动填充） */
-const PROVIDER_PRESETS: Record<Exclude<ApiProvider, 'custom'>, string> = {
-  openai: 'https://api.openai.com/v1',
-  deepseek: 'https://api.deepseek.com/v1',
-  kimi: 'https://api.moonshot.cn/v1',
-  moonshot: 'https://api.moonshot.cn/v1',
-}
+const SETTINGS_TABS = [
+  { value: 'providers', label: '模型提供商' },
+  { value: 'model', label: '模型 / 提示词设置' },
+] as const
 
-const PROVIDER_MODEL_HINT: Record<ApiProvider, string> = {
-  openai: 'gpt-4o-mini',
-  deepseek: 'deepseek-chat',
-  kimi: 'moonshot-v1-8k',
-  moonshot: 'moonshot-v1-8k',
-  custom: '你的模型名',
-}
+type SettingsTab = (typeof SETTINGS_TABS)[number]['value']
 
 /**
- * 设置页：API Key 管理（加密存储 / 脱敏展示）。
- * 配置的 Key 供解析、embedding 与 AI 生成使用（项目级优先，回退全局）。
+ * 设置页（docs/TECHv1.1.md §5.1 / PRD v1.1 §2.1）。
+ *
+ * - 「模型提供商」标签页：管理 AI 服务商 / API Key / 模型列表，可检测连接并设置全局默认。
+ * - 「模型 / 提示词设置」标签页：全局默认思维深度、随机性、最大输出长度与系统提示词模板。
+ *
+ * V1.1 起旧 ApiKeyConfig 管理（/settings/keys）已迁移到模型提供商，原「已配置的 API Key」
+ * 与「添加 API Key」区块随之移除（对应端点已从后端删除）。
  */
 export default function Settings() {
-  const queryClient = useQueryClient()
-  const { data: keys = [], isLoading } = useQuery({
-    queryKey: ['settings-keys'],
-    queryFn: settingsApi.listKeys,
-  })
-
-  const [provider, setProvider] = useState<ApiProvider>('deepseek')
-  const [name, setName] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS.deepseek)
-  const [model, setModel] = useState('')
-  const [isDefault, setIsDefault] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
+  const [tab, setTab] = useState<SettingsTab>('providers')
   const togglePanel = useSettingsPanelStore((s) => s.togglePanel)
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      settingsApi.saveKey({
-        provider,
-        name,
-        api_key: apiKey,
-        base_url: baseUrl,
-        model: model.trim() || undefined,
-        is_default: isDefault,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings-keys'] })
-      setName('')
-      setApiKey('')
-      setModel('')
-      setIsDefault(false)
-      setError(null)
-    },
-    onError: (err) => setError(getErrorMessage(err)),
-  })
-
-  const deleteMutation = useMutation({
-    mutationFn: (keyId: string) => settingsApi.deleteKey(keyId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings-keys'] }),
-  })
-
-  const handleProviderChange = (value: ApiProvider) => {
-    setProvider(value)
-    if (value !== 'custom') setBaseUrl(PROVIDER_PRESETS[value])
-  }
-
-  const handleDelete = (key: ApiKeyConfig) => {
-    if (window.confirm(`确定删除 API Key「${key.name}」？`)) deleteMutation.mutate(key.id)
-  }
 
   return (
     <div className="mx-auto min-h-full max-w-3xl space-y-6 bg-background px-6 py-6">
       <header>
         <h1 className="text-2xl font-bold text-foreground">设置</h1>
         <p className="mt-1 text-sm text-slate-500">
-          配置 API Key（AES-GCM 加密存储，不暴露明文），供文档解析、embedding 与 AI 生成使用
+          管理 AI 模型提供商（API Key 加密存储，不暴露明文）与全局模型 / 提示词默认值
         </p>
       </header>
 
-      {/* 模型/提示词设置（全局默认） */}
-      <section className="rounded-xl border border-border bg-card p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">模型 / 提示词设置</h2>
-            <p className="mt-1 text-xs text-slate-400">
-              配置全局默认思维深度、随机性、最大输出长度与系统提示词模板；新创建的项目会继承这些默认值。
-            </p>
-          </div>
+      {/* 标签页导航 */}
+      <nav className="flex shrink-0 border-b border-border">
+        {SETTINGS_TABS.map((t) => (
           <button
-            className="shrink-0 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
-            onClick={togglePanel}
-          >
-            ⚙ 打开设置面板
-          </button>
-        </div>
-      </section>
-
-      {/* 已配置的 Key */}
-      <section className="rounded-xl border border-border bg-card">
-        <header className="border-b border-border px-4 py-2.5">
-          <h2 className="text-sm font-semibold text-foreground">已配置的 API Key（{keys.length}）</h2>
-        </header>
-        {isLoading && <p className="p-4 text-sm text-slate-400">加载中…</p>}
-        {!isLoading && keys.length === 0 && (
-          <p className="p-4 text-sm text-slate-400">尚未配置 API Key，请在下方添加</p>
-        )}
-        <ul className="divide-y divide-border">
-          {keys.map((key) => (
-            <li key={key.id} className="flex items-center gap-3 px-4 py-3">
-              <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  {key.name}
-                  {key.is_default && (
-                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      默认
-                    </span>
-                  )}
-                </p>
-                <p className="mt-0.5 truncate text-xs text-slate-400">
-                  {key.provider} · <code className="text-slate-500">{key.key_masked}</code>
-                  {key.model ? ` · ${key.model}` : ''}
-                </p>
-                <p className="truncate text-xs text-slate-400">{key.base_url}</p>
-              </div>
-              <button
-                className="shrink-0 text-xs text-slate-400 hover:text-danger"
-                onClick={() => handleDelete(key)}
-              >
-                删除
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {/* 新增 / 更新表单 */}
-      <section className="rounded-xl border border-border bg-card p-5">
-        <h2 className="mb-4 text-sm font-semibold text-foreground">添加 API Key</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-xs text-slate-500">
-            提供商
-            <select
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value as ApiProvider)}
-              className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:border-primary focus:outline-none"
-            >
-              {(['openai', 'deepseek', 'kimi', 'moonshot', 'custom'] as ApiProvider[]).map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs text-slate-500">
-            名称
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="如：deepseek-main"
-              className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:border-primary focus:outline-none"
-            />
-          </label>
-          <label className="col-span-2 text-xs text-slate-500">
-            API Key
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-..."
-              className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:border-primary focus:outline-none"
-            />
-          </label>
-          <label className="col-span-2 text-xs text-slate-500">
-            Base URL
-            <input
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-              className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:border-primary focus:outline-none"
-            />
-          </label>
-          <label className="text-xs text-slate-500">
-            模型
-            <input
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder={PROVIDER_MODEL_HINT[provider]}
-              className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:border-primary focus:outline-none"
-            />
-          </label>
-          <div className="flex items-end pb-1">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-500">
-              <input
-                type="checkbox"
-                checked={isDefault}
-                onChange={(e) => setIsDefault(e.target.checked)}
-                className="h-4 w-4 accent-primary"
-              />
-              设为默认（优先使用）
-            </label>
-          </div>
-        </div>
-
-        {error && <p className="mt-3 text-xs text-danger">{error}</p>}
-
-        <div className="mt-4 flex justify-end">
-          <button
+            key={t.value}
+            type="button"
+            onClick={() => setTab(t.value)}
             className={cn(
-              'rounded-md px-5 py-2 text-sm font-medium text-primary-foreground',
-              saveMutation.isPending ? 'bg-primary/60' : 'bg-primary hover:bg-primary-hover',
+              'border-b-2 px-4 py-2.5 text-sm transition-colors',
+              tab === t.value
+                ? 'border-primary font-medium text-primary'
+                : 'border-transparent text-slate-500 hover:text-foreground',
             )}
-            disabled={saveMutation.isPending || !apiKey.trim() || !name.trim() || !baseUrl.trim()}
-            onClick={() => saveMutation.mutate()}
           >
-            {saveMutation.isPending ? '保存中…' : '保存'}
+            {t.label}
           </button>
-        </div>
-      </section>
+        ))}
+      </nav>
 
-      {/* 全局模型/提示词设置抽屉 */}
+      {tab === 'providers' ? (
+        <ModelProviderManagement />
+      ) : (
+        <section className="rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">模型 / 提示词设置</h2>
+              <p className="mt-1 text-xs text-slate-400">
+                配置全局默认思维深度、随机性、最大输出长度与系统提示词模板；新创建的项目会继承这些默认值。
+              </p>
+            </div>
+            <button
+              className="shrink-0 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
+              onClick={togglePanel}
+            >
+              ⚙ 打开设置面板
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* 全局模型/提示词设置抽屉（任一标签页均可打开） */}
       <ModelPromptSettings scope="global" />
     </div>
   )

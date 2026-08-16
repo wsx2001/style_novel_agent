@@ -53,11 +53,14 @@ async def list_projects(db: AsyncSession = Depends(get_db)) -> list[Project]:
 async def create_project(
     payload: ProjectCreate, db: AsyncSession = Depends(get_db)
 ) -> Project:
-    """创建项目；V1 起将全局默认模型配置复制到项目默认，全局默认模板 ID 复制到项目默认模板。
+    """创建项目；继承全局默认模型配置 / 提示词模板 / 提供商与模型。
 
-    V1.1 起同时继承全局默认提供商与模型（未配置时为 None，表示生成时回退全局）。
-    未配置全局默认时使用标准默认模型配置；默认提示词模板可空（生成时回退到全局）。
+    V1 将全局默认模型配置复制到项目默认，全局默认模板 ID 复制到项目默认模板。
+    V1.1 起创建时可显式传 default_provider_id / default_model_id 覆盖继承
+    （docs/TECHv1.1.md §5.2）：未传（或传空）时从全局默认复制；全局也未配置
+    时为 None（生成时经 services/llm/resolve 回退全局或提示配置）。
     """
+    data = payload.model_dump()
     global_model_config = await db.scalar(
         select(AppConfig.value).where(AppConfig.key == GLOBAL_DEFAULT_MODEL_CONFIG_KEY)
     )
@@ -76,12 +79,27 @@ async def create_project(
         else dict(DEFAULT_PROJECT_MODEL_CONFIG)
     )
     default_prompt_template_id = str(global_template_id) if global_template_id else None
+
+    # 请求显式指定时优先使用，否则回退全局默认（docs/TECHv1.1.md §5.2）
+    default_provider_id = data.pop("default_provider_id", None)
+    default_model_id = data.pop("default_model_id", None)
+    if not default_provider_id:
+        default_provider_id = str(global_provider_id) if global_provider_id else None
+    if not default_model_id:
+        default_model_id = str(global_model_id) if global_model_id else None
+    if default_provider_id:
+        provider = await db.get(ModelProvider, default_provider_id)
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"模型提供商 {default_provider_id} 不存在",
+            )
     project = Project(
-        **payload.model_dump(),
+        **data,
         default_model_config=default_model_config,
         default_prompt_template_id=default_prompt_template_id,
-        default_provider_id=str(global_provider_id) if global_provider_id else None,
-        default_model_id=str(global_model_id) if global_model_id else None,
+        default_provider_id=default_provider_id,
+        default_model_id=default_model_id,
     )
     db.add(project)
     await db.commit()

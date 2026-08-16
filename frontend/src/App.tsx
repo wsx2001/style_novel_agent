@@ -7,6 +7,7 @@ import DocumentParse from '@/pages/DocumentParse'
 import ChapterEditor from '@/pages/ChapterEditor'
 import ConversationWorkspace from '@/pages/ConversationWorkspace'
 import Settings from '@/pages/Settings'
+import ProjectSettings from '@/pages/ProjectSettings'
 
 /**
  * 应用路由表：
@@ -17,7 +18,7 @@ import Settings from '@/pages/Settings'
  *     /chapters                      章节编辑器（默认子页）
  *     /documents                     文档解析
  *     /knowledge                     知识库
- *     /settings                      设置
+ *     /settings                      项目设置
  */
 export default function App() {
   return (
@@ -33,7 +34,7 @@ export default function App() {
           <Route path="documents" element={<DocumentParse />} />
           <Route path="knowledge" element={<KnowledgeBase />} />
           <Route path="conversation" element={<ConversationWorkspace />} />
-          <Route path="settings" element={<Settings />} />
+          <Route path="settings" element={<ProjectSettings />} />
         </Route>
 
         {/* 未匹配路由回退到项目列表 */}

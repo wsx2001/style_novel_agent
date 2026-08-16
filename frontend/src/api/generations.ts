@@ -21,6 +21,9 @@ export interface ContinuePayload {
   model_config?: ModelConfigWire
   /** V1：系统提示词模板 ID */
   system_prompt_template_id?: string
+  /** V1.1：本次生成临时指定的提供商与模型（优先级最高，docs/TECHv1.1.md §5.4） */
+  provider_id?: string
+  model_id?: string
 }
 
 /** 重写请求体（wire 形态，POST /chapters/{id}/generate/rewrite） */
@@ -36,6 +39,9 @@ export interface RewritePayload {
   model_config?: ModelConfigWire
   /** V1：系统提示词模板 ID */
   system_prompt_template_id?: string
+  /** V1.1：本次生成临时指定的提供商与模型（优先级最高，docs/TECHv1.1.md §5.4） */
+  provider_id?: string
+  model_id?: string
 }
 
 /** 续写参数（前端 camelCase 形态，供 continueGeneration 使用） */
@@ -48,6 +54,9 @@ export interface ContinueParams {
   candidateCount?: number
   modelConfig?: Partial<ModelConfig>
   systemPromptTemplateId?: string
+  /** V1.1：本次生成临时指定的提供商与模型（不传则回退会话/项目/全局默认） */
+  providerId?: string
+  modelId?: string
 }
 
 /** 重写参数（前端 camelCase 形态，供 rewriteGeneration 使用） */
@@ -61,12 +70,24 @@ export interface RewriteParams {
   candidateCount?: number
   modelConfig?: Partial<ModelConfig>
   systemPromptTemplateId?: string
+  /** V1.1：本次生成临时指定的提供商与模型（不传则回退会话/项目/全局默认） */
+  providerId?: string
+  modelId?: string
 }
 
 /** 灵感响应体（POST /projects/{id}/generate/inspire） */
 export interface InspireResult {
   id: string
   content: string
+}
+
+/** 灵感生成参数（前端 camelCase 形态） */
+export interface InspireParams {
+  idea: string
+  temperature?: number
+  /** V1.1：本次生成临时指定的提供商与模型（不传则回退项目/全局默认，docs/TECHv1.1.md §5.4） */
+  providerId?: string
+  modelId?: string
 }
 
 /** 前端 ModelConfig → 后端 wire model_config（snake_case 键） */
@@ -88,6 +109,8 @@ function buildContinuePayload(params: ContinueParams): ContinuePayload {
     candidate_count: params.candidateCount ?? 3,
     ...(params.modelConfig ? { model_config: toModelConfigWire(params.modelConfig) } : {}),
     ...(params.systemPromptTemplateId ? { system_prompt_template_id: params.systemPromptTemplateId } : {}),
+    ...(params.providerId ? { provider_id: params.providerId } : {}),
+    ...(params.modelId ? { model_id: params.modelId } : {}),
   }
 }
 
@@ -102,6 +125,8 @@ function buildRewritePayload(params: RewriteParams): RewritePayload {
     candidate_count: params.candidateCount ?? 3,
     ...(params.modelConfig ? { model_config: toModelConfigWire(params.modelConfig) } : {}),
     ...(params.systemPromptTemplateId ? { system_prompt_template_id: params.systemPromptTemplateId } : {}),
+    ...(params.providerId ? { provider_id: params.providerId } : {}),
+    ...(params.modelId ? { model_id: params.modelId } : {}),
   }
 }
 
@@ -144,11 +169,13 @@ export const generationsApi = {
     return data
   },
 
-  /** POST /projects/{project_id}/generate/inspire —— 灵感生成（同步） */
-  async inspire(projectId: string, idea: string, temperature = 0.9): Promise<InspireResult> {
+  /** POST /projects/{project_id}/generate/inspire —— 灵感生成（同步，V1.1 支持临时指定提供商/模型） */
+  async inspire(projectId: string, params: InspireParams): Promise<InspireResult> {
     const { data } = await client.post<InspireResult>(`/projects/${projectId}/generate/inspire`, {
-      idea,
-      temperature,
+      idea: params.idea,
+      ...(params.temperature != null ? { temperature: params.temperature } : {}),
+      ...(params.providerId ? { provider_id: params.providerId } : {}),
+      ...(params.modelId ? { model_id: params.modelId } : {}),
     })
     return data
   },

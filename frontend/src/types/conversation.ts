@@ -15,6 +15,9 @@ export interface Conversation {
   modelConfig: ModelConfig
   systemPromptTemplateId: string | null
   systemPromptOverride: string | null
+  /** V1.1：会话当前使用的提供商与模型（记住最后选择，docs/TECHv1.1.md §4.4） */
+  currentProviderId: string | null
+  currentModelId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -44,6 +47,9 @@ export interface ConversationCreate {
   chapterId?: string
   modelConfig?: Partial<ModelConfig>
   systemPromptTemplateId?: string
+  /** V1.1：会话初始使用的提供商与模型（不传则生成时继承项目/全局默认） */
+  currentProviderId?: string | null
+  currentModelId?: string | null
 }
 
 /** 更新对话请求体（仅显式传入的字段生效） */
@@ -54,4 +60,13 @@ export interface ConversationUpdate {
   systemPromptTemplateId?: string | null
   /** 会话级临时覆盖（仅本会话生效）；显式传 null 表示清除覆盖 */
   systemPromptOverride?: string | null
+  /** V1.1：会话当前使用的提供商与模型（切换后记住最后选择，docs/TECHv1.1.md §4.4） */
+  currentProviderId?: string | null
+  currentModelId?: string | null
+}
+
+/** 发送消息时临时指定的模型（providerId/modelId 优先级最高，docs/TECHv1.1.md §5.3） */
+export interface SendMessageOptions {
+  providerId?: string
+  modelId?: string
 }

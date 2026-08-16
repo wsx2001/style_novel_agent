@@ -9,6 +9,7 @@ import type {
   Message,
   MessageRole,
   ModelConfig,
+  SendMessageOptions,
 } from '@/types'
 
 /**
@@ -33,6 +34,8 @@ function toConversation(raw: Record<string, unknown>): Conversation {
     modelConfig: toModelConfig(raw.model_config as Record<string, unknown> | null),
     systemPromptTemplateId: (raw.system_prompt_template_id as string) ?? null,
     systemPromptOverride: (raw.system_prompt_override as string) ?? null,
+    currentProviderId: (raw.current_provider_id as string) ?? null,
+    currentModelId: (raw.current_model_id as string) ?? null,
     createdAt: raw.created_at as string,
     updatedAt: raw.updated_at as string,
   }
@@ -63,6 +66,8 @@ function buildCreateBody(payload: ConversationCreate): Record<string, unknown> {
   if (payload.systemPromptTemplateId != null) {
     body.system_prompt_template_id = payload.systemPromptTemplateId
   }
+  if (payload.currentProviderId != null) body.current_provider_id = payload.currentProviderId
+  if (payload.currentModelId != null) body.current_model_id = payload.currentModelId
   return body
 }
 
@@ -75,6 +80,8 @@ function buildUpdateBody(payload: ConversationUpdate): Record<string, unknown> {
     body.system_prompt_template_id = payload.systemPromptTemplateId
   }
   if (payload.systemPromptOverride !== undefined) body.system_prompt_override = payload.systemPromptOverride
+  if (payload.currentProviderId !== undefined) body.current_provider_id = payload.currentProviderId
+  if (payload.currentModelId !== undefined) body.current_model_id = payload.currentModelId
   return body
 }
 
@@ -131,6 +138,8 @@ export const conversationsApi = {
   /**
    * POST /conversations/{id}/messages —— 发送消息（SSE 流式，单回复）。
    * 事件：delta（增量正文）/ done（message_id）/ error（message）。
+   * V1.1：options.providerId / options.modelId 用于临时指定本次生成使用的模型（优先级最高，
+   * 若与会话当前模型不同，后端自动更新会话并插入「模型已切换」系统消息，docs/TECHv1.1.md §5.3）。
    */
   async sendMessage(
     conversationId: string,
@@ -138,11 +147,16 @@ export const conversationsApi = {
     onDelta: (text: string) => void,
     onDone: (messageId: string) => void,
     signal?: AbortSignal,
+    options?: SendMessageOptions,
   ): Promise<void> {
     let error: string | null = null
     await streamSSE(
       `/api/v1/conversations/${conversationId}/messages`,
-      { content: userInput },
+      {
+        content: userInput,
+        ...(options?.providerId != null ? { provider_id: options.providerId } : {}),
+        ...(options?.modelId != null ? { model_id: options.modelId } : {}),
+      },
       (ev: SSEEvent) => {
         if (ev.event === 'delta') {
           const { content } = JSON.parse(ev.data) as { content: string }

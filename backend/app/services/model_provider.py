@@ -418,7 +418,9 @@ async def list_providers(db: AsyncSession) -> list[dict]:
 
 
 def select_api_key(
-    provider: ModelProvider, target_model_id: Optional[str]
+    provider: ModelProvider,
+    target_model_id: Optional[str],
+    exclude_key_ids: Optional[set[str]] = None,
 ) -> tuple[dict, str]:
     """在生成 / 对话前选择可用的 API Key（docs/TECHv1.1.md §7.2）。
 
@@ -432,13 +434,18 @@ def select_api_key(
        可能过时，调用失败由调用方标记并尝试下一个 Key）；
     3. 无启用 Key 时抛 NoAvailableApiKey。
 
+    exclude_key_ids（V1.1，可选）：调用失败重试时排除已失败的 Key
+    （docs/TECHv1.1.md §7.2「尝试下一个 Key」），默认 None。
+
     返回 (key_obj, decrypted_key)：key_obj 为 api_keys_json 中的记录 dict。
     """
     api_keys = provider.api_keys_json or []
     enabled = [k for k in api_keys if k.get("enabled", True)]
+    if exclude_key_ids:
+        enabled = [k for k in enabled if k.get("key_id") not in exclude_key_ids]
     if not enabled:
         raise NoAvailableApiKey(
-            f"提供商「{provider.name}」没有启用的 API Key"
+            f"提供商「{provider.name}」没有可用的 API Key"
         )
     enabled.sort(key=lambda k: k.get("priority", DEFAULT_PRIORITY))
 
