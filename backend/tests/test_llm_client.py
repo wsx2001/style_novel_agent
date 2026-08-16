@@ -493,3 +493,63 @@ async def test_get_llm_client_no_provider_raises(session_factory):
     async with session_factory() as session:
         with pytest.raises(LLMConfigError):
             await get_llm_client("no-such-provider", "gpt-4o", db=session)
+
+
+# ---------------------------------------------------------------------------
+# max_tokens=0（无上限）：请求体省略 max_tokens，交给提供商默认输出上限
+# ---------------------------------------------------------------------------
+
+
+def test_build_params_omits_max_tokens_when_zero():
+    """max_tokens=0 时最终参数字典不含 max_tokens；显式值保留。"""
+    client = LLMClient()
+    assert "max_tokens" not in client._build_params(
+        model="gpt-4o", temperature=0.7, max_tokens=0
+    )
+    assert client._build_params(
+        model="gpt-4o", temperature=0.7, max_tokens=2048
+    )["max_tokens"] == 2048
+
+
+def test_build_params_depth_user_zero_overrides_mapping():
+    """深度映射注入 max_tokens 时，用户显式 0（无上限）覆盖并省略。"""
+    client = LLMClient()
+    params = client._build_params(
+        model="gpt-4o",
+        temperature=0.7,
+        max_tokens=0,
+        depth="medium",
+        user_params={"temperature": 0.7, "max_tokens": 0},
+    )
+    assert "max_tokens" not in params
+    # 未显式传 0 时，深度映射的中等档默认 max_tokens=2048 仍生效
+    params = client._build_params(
+        model="gpt-4o", temperature=0.7, max_tokens=0, depth="medium"
+    )
+    assert params["max_tokens"] == 2048
+
+
+async def test_chat_completion_max_tokens_zero_omitted_from_request(session_factory):
+    """动态路径 chat_completion(max_tokens=0)：发出的请求体不含 max_tokens。"""
+    provider = await _provider_two_keys(
+        session_factory, base_url="http://127.0.0.1:9000/v1"
+    )
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_completion_json("ok"))
+
+    transport = httpx.AsyncClient(transport=httpx.MockTransport(handler), trust_env=False)
+    client = LLMClient()
+    async with session_factory() as session:
+        await client.chat_completion(
+            MESSAGES,
+            provider_id=provider.id,
+            model_id="gpt-4o",
+            db=session,
+            http_client=transport,
+            max_tokens=0,
+        )
+    assert "max_tokens" not in captured["body"]
+

@@ -24,11 +24,11 @@ from ...services.prompt_template import get_prompt_template_by_id
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
-# 项目默认模型配置（全局未配置时的兜底值，与模型列默认一致）
+# 项目默认模型配置（全局未配置时的兜底值，与模型列默认一致；max_tokens=0 表示无上限）
 DEFAULT_PROJECT_MODEL_CONFIG = {
     "depth": "auto",
     "temperature": 0.7,
-    "max_tokens": 2048,
+    "max_tokens": 0,
 }
 
 

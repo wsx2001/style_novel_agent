@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 # 生成参数（docs/TECH.md §7）
 TAIL_CONTEXT_CHARS = 1500  # 续写使用的章节尾部上下文长度
-DEFAULT_MAX_TOKENS = 2048  # 单个候选的 token 上限（模型总输出）
+DEFAULT_MAX_TOKENS = 0  # 默认无上限：0 表示省略 max_tokens，交由提供商默认输出上限
 RECOMMEND_TOP_N = 12  # 送入 Prompt 的卡片数上限（docs/TECH.md §6.5：8~12）
 
 

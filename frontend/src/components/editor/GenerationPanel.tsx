@@ -44,8 +44,8 @@ function toNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-/** 模型/提示词临时设置的兜底值（无项目/全局配置时使用，与全局设置面板 DEFAULT_CONFIG 一致） */
-const FALLBACK_CONFIG = { depth: 'auto', temperature: 0.7, maxTokens: 2048 } as const
+/** 模型/提示词临时设置的兜底值（无项目/全局配置时使用，与全局设置面板 DEFAULT_CONFIG 一致；maxTokens=0 无上限） */
+const FALLBACK_CONFIG = { depth: 'auto', temperature: 0.7, maxTokens: 0 } as const
 
 /**
  * AI 生成面板（右侧栏）：
@@ -294,19 +294,35 @@ export function GenerationPanel({
           </label>
           <label className="text-xs text-slate-500">
             最大输出长度
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={maxTokens}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                if (Number.isNaN(v)) return
-                setMaxTokens(Math.max(1, Math.floor(v)))
-                setTouched(true)
-              }}
-              className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-sm focus:border-primary focus:outline-none"
-            />
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={maxTokens === 0 ? '' : maxTokens}
+                placeholder={maxTokens === 0 ? '无上限' : ''}
+                disabled={maxTokens === 0}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (Number.isNaN(v)) return
+                  setMaxTokens(Math.max(1, Math.floor(v)))
+                  setTouched(true)
+                }}
+                className="w-full rounded-md border border-border bg-background px-2 py-1 text-sm focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-slate-500">
+                <input
+                  type="checkbox"
+                  checked={maxTokens === 0}
+                  onChange={(e) => {
+                    setMaxTokens(e.target.checked ? 0 : 2048)
+                    setTouched(true)
+                  }}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                无上限
+              </label>
+            </div>
           </label>
         </div>
 

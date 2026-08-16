@@ -17,7 +17,7 @@ class Project(Base, TimestampMixin):
     cover_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # V1 新增：默认模型配置（深度、温度、max_tokens）
-    default_model_config: Mapped[dict] = mapped_column(JSON, default=lambda: {"depth": "auto", "temperature": 0.7, "max_tokens": 2048})
+    default_model_config: Mapped[dict] = mapped_column(JSON, default=lambda: {"depth": "auto", "temperature": 0.7, "max_tokens": 0})
     # V1 新增：默认提示词模板 ID（可空，删除模板时置空）
     default_prompt_template_id: Mapped[Optional[str]] = mapped_column(ForeignKey("prompt_templates.id", ondelete="SET NULL"), nullable=True)
 

@@ -102,7 +102,7 @@ async def create_conversation(
 ) -> Conversation:
     """创建对话；校验项目存在、章节归属、模板存在性。
 
-    model_config 缺省时由模型列默认值填充（{"depth": "auto", "temperature": 0.7, "max_tokens": 2048}）；
+    model_config 缺省时由模型列默认值填充（{"depth": "auto", "temperature": 0.7, "max_tokens": 0}，0 = 无上限）；
     current_provider_id / current_model_id（V1.1）可指定会话当前模型，不传则生成时回退项目/全局默认。
     """
     project = await db.get(Project, project_id)
@@ -239,11 +239,11 @@ async def send_message(
         db, conversation.project_id, conversation, context
     )
 
-    # 模型配置：depth / temperature / max_tokens 取自会话 model_config
+    # 模型配置：depth / temperature / max_tokens 取自会话 model_config（0 = 无上限）
     model_config = conversation.model_config or {}
     depth = model_config.get("depth", "auto")
     temperature = model_config.get("temperature", 0.7)
-    max_tokens = model_config.get("max_tokens", 2048)
+    max_tokens = model_config.get("max_tokens", 0)
 
     # 组装消息：[system, ...history[-20:], user]
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]

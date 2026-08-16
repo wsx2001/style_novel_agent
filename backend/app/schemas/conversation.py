@@ -19,11 +19,11 @@ from typing import Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-# 对话默认模型配置（与模型 / 全局默认一致，docs/TECHv1.md §4.4）
+# 对话默认模型配置（与模型 / 全局默认一致，docs/TECHv1.md §4.4；max_tokens=0 表示无上限）
 DEFAULT_CONVERSATION_MODEL_CONFIG = {
     "depth": "auto",
     "temperature": 0.7,
-    "max_tokens": 2048,
+    "max_tokens": 0,
 }
 
 # Pydantic 保留 `model_config` 作配置属性，不能作为字段名。因此 Python 侧字段承接名统一为

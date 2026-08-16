@@ -20,7 +20,7 @@ interface ModelPromptSettingsProps {
   conversationId?: string | null
 }
 
-const DEFAULT_CONFIG: NormalizedModelConfig = { depth: 'auto', temperature: 0.7, maxTokens: 2048 }
+const DEFAULT_CONFIG: NormalizedModelConfig = { depth: 'auto', temperature: 0.7, maxTokens: 0 }
 
 const DEPTH_VALUES: DepthLevel[] = ['none', 'auto', 'low', 'medium', 'high', 'extreme']
 

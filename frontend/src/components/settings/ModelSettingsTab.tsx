@@ -93,18 +93,28 @@ export default function ModelSettingsTab({
         </div>
       </section>
 
-      {/* 最大输出长度 */}
+      {/* 最大输出长度（0 = 无上限，省略 max_tokens 交由提供商默认） */}
       <section>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-foreground">最大输出长度</h3>
-          <span className="text-xs text-slate-400">Tokens</span>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={maxTokens === 0}
+              disabled={loading}
+              onChange={(e) => setMaxTokens(e.target.checked ? 0 : 2048)}
+              className="h-3.5 w-3.5 accent-primary"
+            />
+            无上限
+          </label>
         </div>
         <input
           type="number"
           min={1}
           step={1}
-          value={maxTokens}
-          disabled={loading}
+          value={maxTokens === 0 ? '' : maxTokens}
+          placeholder={maxTokens === 0 ? '无上限' : ''}
+          disabled={loading || maxTokens === 0}
           onChange={(e) => {
             const v = Number(e.target.value)
             if (Number.isNaN(v)) return

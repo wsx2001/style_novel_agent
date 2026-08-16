@@ -258,6 +258,10 @@ class LLMClient:
                     knowledge_card_count=knowledge_card_count,
                 )
             )
+        # max_tokens == 0 / None → 无上限：不传该参数，交由提供商默认输出上限
+        # （避免 max_tokens=0 被部分 API 拒绝；映射/user_params 中的 0 同样生效）
+        if base.get("max_tokens") in (0, None):
+            base.pop("max_tokens", None)
         return base
 
     def _record_usage(self, provider_id: str, model_id: str, key_id: str) -> None:
@@ -272,7 +276,7 @@ class LLMClient:
         *,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 0,
         response_format: Optional[dict[str, str]] = None,
         depth: Optional[str] = None,
         user_params: Optional[dict[str, Any]] = None,
@@ -410,7 +414,7 @@ class LLMClient:
         *,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 0,
         depth: Optional[str] = None,
         user_params: Optional[dict[str, Any]] = None,
         mapping: Optional[dict[str, Any]] = None,
