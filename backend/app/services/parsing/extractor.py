@@ -10,15 +10,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from ..llm.client import LLMClient
 from ..llm.prompts import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_PROMPT_TEMPLATE
 
+logger = logging.getLogger(__name__)
+
 # 分块参数（docs/TECH.md §6.2）
 CHUNK_SIZE = 4000
 CHUNK_OVERLAP = 200
+
+# 单分块抽取的 token 上限：推理模型（如 DeepSeek V4）会把大量预算消耗在
+# reasoning_content 上，上限太小会导致 content 为空/截断（曾用 2048 触发
+# "LLM 未返回有效 JSON：''"）。8192 仅为上限，不强制消耗，按实际用量计费。
+EXTRACTION_MAX_TOKENS = 8192
 
 # parse_threshold -> temperature（阈值越高，抽取越保守稳定）
 THRESHOLD_TEMPERATURE: dict[str, float] = {"low": 0.4, "medium": 0.2, "high": 0.1}
@@ -139,12 +147,12 @@ async def _chat_json(
         return await client.chat_completion(
             messages,
             temperature=temperature,
-            max_tokens=2048,
+            max_tokens=EXTRACTION_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
     except Exception:
         return await client.chat_completion(
-            messages, temperature=temperature, max_tokens=2048
+            messages, temperature=temperature, max_tokens=EXTRACTION_MAX_TOKENS
         )
 
 
@@ -167,6 +175,10 @@ async def extract_candidates(
             },
         ]
         raw = await _chat_json(client, messages, temperature)
-        results.append(_extract_json(raw))
+        try:
+            results.append(_extract_json(raw))
+        except ValueError as exc:
+            # 单分块返回空/无效 JSON 不拖垮整个文档：记日志并跳过该分块
+            logger.warning("设定抽取：分块返回非有效 JSON，已跳过：%s", exc)
 
     return _to_candidate_cards(_merge_results(results))
