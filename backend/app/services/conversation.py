@@ -4,8 +4,9 @@
 提供对话 CRUD、消息查询与 send_message 流式对话：
 - 各函数使用 AsyncSession，事务在函数内 commit；
 - send_message 按 §7.3 流程：渲染系统提示词（复用 prompt_template 服务）→
-  组装 [system, ...history[-20:], user] → 调用 LLM 流式接口
+  组装 [system, ...history[-N:], user] → 调用 LLM 流式接口
   （深度配置集成于 services/llm/client.py）→ 持久化 user/assistant 消息 → 产出 SSE 帧。
+  历史条数 N：默认 20，模型开启「1M 上下文」时放宽到 100。
 """
 from __future__ import annotations
 
@@ -18,8 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models import Chapter, Conversation, Message, Project
-from .llm.prompts import build_context_for_prompt, get_effective_system_prompt
-from .llm.resolve import ResolvedLLM
+from .llm.prompts import (
+    CONVERSATION_HISTORY_LIMIT,
+    CONVERSATION_HISTORY_LIMIT_1M,
+    build_context_for_prompt,
+    get_effective_system_prompt,
+)
+from .llm.resolve import ResolvedLLM, resolve_supports_1m
 from .llm.stream import sse_event
 from .prompt_template import get_prompt_template_by_id
 
@@ -27,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 # 对话模式每次携带的最近消息条数（docs/TECHv1.md §7.3：最近 20 条）
 HISTORY_LIMIT = 20
+# 模型开启「1M 上下文」时放宽到最近 100 条
+HISTORY_LIMIT_1M = 100
 
 
 class ConversationNotFound(Exception):
@@ -196,8 +204,8 @@ async def send_message(
 
     流程：加载对话 →（V1.1）若解析出的提供商/模型与会话当前不同，更新会话
     current_provider_id/current_model_id 并插入「模型已切换」系统消息（§5.3，
-    该消息作为历史消息发送给模型）→ 加载最近 20 条历史 →
-    build_context_for_prompt 渲染系统提示词 → 组装 [system, ...history[-20:], user] →
+    该消息作为历史消息发送给模型）→ 加载最近 N 条历史（1M 模型 100 条，否则 20 条）→
+    build_context_for_prompt 渲染系统提示词 → 组装 [system, ...history[-N:], user] →
     resolved.client.chat_completion_stream（思维深度映射见 llm/client.py，
     depth 取自 conversation.model_config）→ 先持久化 user 消息，
     流式结束后持久化 assistant 消息。
@@ -223,7 +231,16 @@ async def send_message(
         await db.flush()
 
     history = await get_messages(db, conversation_id)
-    history = history[-HISTORY_LIMIT:]
+    # 模型开启「1M 上下文」时放宽历史条数（§7.2 链 + 提供商模型标记判定）
+    supports_1m = await resolve_supports_1m(
+        db,
+        resolved.provider,
+        resolved.model_id,
+        project_id=conversation.project_id,
+        conversation=conversation,
+    )
+    history_limit = HISTORY_LIMIT_1M if supports_1m else HISTORY_LIMIT
+    history = history[-history_limit:]
 
     # 渲染有效系统提示词（会话覆盖 > 会话模板 > 项目默认 > 全局默认）
     context = await build_context_for_prompt(
@@ -234,6 +251,9 @@ async def send_message(
         user_input=user_input,
         knowledge_cards=[],
         style_card=None,
+        history_limit=(
+            CONVERSATION_HISTORY_LIMIT_1M if supports_1m else CONVERSATION_HISTORY_LIMIT
+        ),
     )
     system_prompt = await get_effective_system_prompt(
         db, conversation.project_id, conversation, context
@@ -245,7 +265,7 @@ async def send_message(
     temperature = model_config.get("temperature", 0.7)
     max_tokens = model_config.get("max_tokens", 0)
 
-    # 组装消息：[system, ...history[-20:], user]
+    # 组装消息：[system, ...history[-history_limit:], user]
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     messages.extend({"role": m.role, "content": m.content} for m in history)
     messages.append({"role": "user", "content": user_input})

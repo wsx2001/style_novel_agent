@@ -5,6 +5,7 @@ import { getErrorMessage } from '@/api/client'
 import { projectsApi, type ExportFormat } from '@/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
+import { ParseProgressOverlay } from '@/components/documents/ParseProgressOverlay'
 import ModelPromptSettings from '@/components/settings/ModelPromptSettings'
 import { useSettingsPanelStore } from '@/store/settingsPanel'
 
@@ -117,6 +118,9 @@ export default function ProjectWorkspace() {
 
       {/* 项目模型/提示词设置抽屉 */}
       <ModelPromptSettings scope="project" projectId={projectId} />
+
+      {/* 文档解析全局进度悬浮面板（解析中/完成/失败时在任意标签页可见） */}
+      <ParseProgressOverlay />
     </div>
   )
 }

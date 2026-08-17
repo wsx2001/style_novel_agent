@@ -15,7 +15,8 @@ class ModelProvider(Base, TimestampMixin):
 
     - api_keys_json 为 list[dict]：每条含 key_id / api_key_encrypted（AES-GCM Base64，
       与旧 ApiKeyConfig.encrypted_key 同格式同主密钥，可直接迁移）/ enabled / priority / available_models。
-    - models_json 为 list[dict]：每条含 model_id / enabled。
+    - models_json 为 list[dict]：每条含 model_id / enabled / supports_1m_context（是否支持 1M
+      上下文，开启后文档解析对 ≤1MB 文件整篇喂入 LLM）。
     - scope：提供商作用域，V1.1 恒为 global（项目级 Key 迁移后统一转为全局提供商）。
     """
 

@@ -22,6 +22,7 @@ function toModelConfig(raw: Record<string, unknown> | null | undefined): ModelCo
     depth: (raw?.depth as ModelConfig['depth']) ?? 'auto',
     ...(raw?.temperature != null ? { temperature: raw.temperature as number } : {}),
     ...(raw?.max_tokens != null ? { maxTokens: raw.max_tokens as number } : {}),
+    ...(raw?.use_1m_context != null ? { use1mContext: raw.use_1m_context === true } : {}),
   }
 }
 

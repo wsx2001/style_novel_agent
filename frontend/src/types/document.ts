@@ -32,3 +32,11 @@ export interface CandidateCard {
 export interface ConfirmImportRequest {
   cards: CandidateCard[]
 }
+
+/** 查询已解析结果（GET /documents/{id}/parse-result，刷新页面后据此恢复候选继续导入） */
+export interface ParseResult {
+  candidates: CandidateCard[]
+  threshold?: ParseThreshold
+  manual_confirm?: boolean
+  extracted_at?: string | null
+}

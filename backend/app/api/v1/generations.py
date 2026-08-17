@@ -56,7 +56,7 @@ from ...services.llm.prompts import (
     build_context_for_prompt,
     candidate_delimiter_list,
 )
-from ...services.llm.resolve import NoLLMConfigError, ResolvedLLM, resolve_llm
+from ...services.llm.resolve import NoLLMConfigError, ResolvedLLM, resolve_llm, resolve_supports_1m
 from ...services.llm.stream import CandidateSplitter, sse_event
 from ...services.retrieval.hybrid import HybridRetriever
 
@@ -68,6 +68,9 @@ logger = logging.getLogger(__name__)
 TAIL_CONTEXT_CHARS = 1500  # 续写使用的章节尾部上下文长度
 DEFAULT_MAX_TOKENS = 0  # 默认无上限：0 表示省略 max_tokens，交由提供商默认输出上限
 RECOMMEND_TOP_N = 12  # 送入 Prompt 的卡片数上限（docs/TECH.md §6.5：8~12）
+# 模型开启「1M 上下文」时放宽的生成上下文（docs/TECHv1.1.md §4.2）
+TAIL_CONTEXT_CHARS_1M = 8000   # 续写尾部上下文
+RECOMMEND_TOP_N_1M = 30        # 送入 Prompt 的卡片数上限
 
 
 async def _get_project_or_404(project_id: str, db: AsyncSession) -> Project:
@@ -142,10 +145,13 @@ async def _select_cards(
     query_text: str,
     explicit_card_ids: list[str],
     resolved: ResolvedLLM,
+    *,
+    top_n: int = RECOMMEND_TOP_N,
 ) -> tuple[list[KnowledgeCard], dict[str, list[str]]]:
     """加载显式卡片 + Chroma 推荐卡片，返回 (卡片列表, card_id -> 原文片段)。
 
     检索失败时静默回退为仅显式卡片（生成流程不因推荐失败而中断）。
+    top_n：推荐卡片数上限（1M 模型由调用方传入 RECOMMEND_TOP_N_1M）。
     """
     explicit: list[KnowledgeCard] = []
     if explicit_card_ids:
@@ -170,7 +176,7 @@ async def _select_cards(
                 project_id,
                 query_text,
                 explicit_card_ids=[c.id for c in explicit],
-                top_n=RECOMMEND_TOP_N,
+                top_n=top_n,
             )
         except Exception as exc:
             logger.warning("生成前检索推荐卡片失败，仅使用显式卡片：%s", exc)
@@ -322,12 +328,6 @@ async def generate_continue(
         ) from exc
     client = resolved.client
 
-    tail = chapter.content[-TAIL_CONTEXT_CHARS:]
-    cards, snippets_by_card = await _select_cards(
-        db, chapter.project_id, tail, payload.card_ids, resolved
-    )
-    style = _style_card(cards, None)
-
     # V1：解析模型配置（请求 > 项目默认 > 全局默认）与系统提示词（docs/TECHv1.md §7.1）
     config_dict = await resolve_model_config(
         db, chapter.project_id, payload.request_model_config
@@ -335,6 +335,23 @@ async def generate_continue(
     depth = config_dict.get("depth", "auto")
     temperature = config_dict.get("temperature", payload.temperature)
     max_tokens = config_dict.get("max_tokens", DEFAULT_MAX_TOKENS)
+
+    # 1M 上下文：模型设置开关（use_1m_context）/ 模型标记生效时放宽章节尾部与推荐卡片数
+    supports_1m = await resolve_supports_1m(
+        db,
+        resolved.provider,
+        resolved.model_id,
+        project_id=chapter.project_id,
+        config_override=config_dict or None,
+    )
+    tail_chars = TAIL_CONTEXT_CHARS_1M if supports_1m else TAIL_CONTEXT_CHARS
+    top_n = RECOMMEND_TOP_N_1M if supports_1m else RECOMMEND_TOP_N
+
+    tail = chapter.content[-tail_chars:]
+    cards, snippets_by_card = await _select_cards(
+        db, chapter.project_id, tail, payload.card_ids, resolved, top_n=top_n
+    )
+    style = _style_card(cards, None)
 
     context = await build_context_for_prompt(
         db,
@@ -449,16 +466,6 @@ async def generate_rewrite(
         ) from exc
     client = resolved.client
 
-    cards, snippets_by_card = await _select_cards(
-        db, chapter.project_id, payload.selected_text, payload.card_ids, resolved
-    )
-    # style_card_id 可能未包含在选中/推荐卡片中：单独加载并前置
-    if payload.style_card_id and not any(c.id == payload.style_card_id for c in cards):
-        style_card = await db.get(KnowledgeCard, payload.style_card_id)
-        if style_card is not None and style_card.project_id == chapter.project_id:
-            cards.insert(0, style_card)
-    style = _style_card(cards, payload.style_card_id)
-
     # V1：解析模型配置（请求 > 项目默认 > 全局默认）与系统提示词（docs/TECHv1.md §7.1）
     config_dict = await resolve_model_config(
         db, chapter.project_id, payload.request_model_config
@@ -466,6 +473,31 @@ async def generate_rewrite(
     depth = config_dict.get("depth", "auto")
     temperature = config_dict.get("temperature", payload.temperature)
     max_tokens = config_dict.get("max_tokens", DEFAULT_MAX_TOKENS)
+
+    # 1M 上下文：模型设置开关（use_1m_context）/ 模型标记生效时放宽推荐卡片数
+    supports_1m = await resolve_supports_1m(
+        db,
+        resolved.provider,
+        resolved.model_id,
+        project_id=chapter.project_id,
+        config_override=config_dict or None,
+    )
+    top_n = RECOMMEND_TOP_N_1M if supports_1m else RECOMMEND_TOP_N
+
+    cards, snippets_by_card = await _select_cards(
+        db,
+        chapter.project_id,
+        payload.selected_text,
+        payload.card_ids,
+        resolved,
+        top_n=top_n,
+    )
+    # style_card_id 可能未包含在选中/推荐卡片中：单独加载并前置
+    if payload.style_card_id and not any(c.id == payload.style_card_id for c in cards):
+        style_card = await db.get(KnowledgeCard, payload.style_card_id)
+        if style_card is not None and style_card.project_id == chapter.project_id:
+            cards.insert(0, style_card)
+    style = _style_card(cards, payload.style_card_id)
 
     context = await build_context_for_prompt(
         db,

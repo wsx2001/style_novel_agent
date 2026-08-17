@@ -29,12 +29,16 @@ from ...models import AppConfig, Conversation, ModelProvider, Project
 from ..model_provider import (
     GLOBAL_DEFAULT_PROVIDER_KEY,
     NoAvailableApiKey,
+    model_supports_1m,
     select_api_key,
 )
 from .client import LLMClient, create_client
 
 # AppConfig 中全局默认模型的存储键（docs/TECHv1.1.md §4.6）
 GLOBAL_DEFAULT_MODEL_KEY = "global_default_model_id"
+
+# AppConfig 中全局默认模型配置的存储键（与 services/generation.py 一致）
+GLOBAL_DEFAULT_MODEL_CONFIG_KEY = "global_default_model_config"
 
 
 class NoLLMConfigError(ValueError):
@@ -200,3 +204,40 @@ async def resolve_embedding(
     except NoAvailableApiKey as exc:
         raise NoLLMConfigError(str(exc)) from exc
     return provider, decrypted
+
+
+async def resolve_supports_1m(
+    db: AsyncSession,
+    provider: ModelProvider,
+    model_id: str,
+    *,
+    project_id: Optional[str] = None,
+    conversation: Optional[Conversation] = None,
+    config_override: Optional[dict] = None,
+) -> bool:
+    """解析「当前模型是否按 1M 上下文放开限制」（docs/TECHv1.1.md §4.2 / §7.2）。
+
+    生效判定（任一生效即 True）：
+    1. 作用域 model_config 开启了 use_1m_context（「模型/提示词设置」抽屉新增的
+       开关，对 global / project / conversation 三个作用域都生效），按
+       显式 config_override > 会话 > 项目 > 全局 依次检查；
+    2. 模型自身 supports_1m_context 标记（提供商表单内该模型的开关）。
+
+    provider / model_id 为调用点已解析出的实际模型（resolve_llm / resolve_embedding）。
+    纯函数逻辑但需读库，调用方在解析出 provider 后传入。
+    """
+    scopes: list[Optional[dict]] = [config_override]
+    if conversation is not None:
+        scopes.append(conversation.model_config)
+    if project_id:
+        project = await db.get(Project, project_id)
+        if project is not None:
+            scopes.append(project.default_model_config)
+    value = await db.scalar(
+        select(AppConfig.value).where(AppConfig.key == GLOBAL_DEFAULT_MODEL_CONFIG_KEY)
+    )
+    if isinstance(value, dict):
+        scopes.append(value)
+    if any(isinstance(c, dict) and c.get("use_1m_context") for c in scopes):
+        return True
+    return model_supports_1m(provider, model_id)

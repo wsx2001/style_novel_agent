@@ -33,6 +33,7 @@ function toModelItem(raw: Record<string, unknown>): ModelItem {
   return {
     modelId: raw.model_id as string,
     enabled: raw.enabled as boolean,
+    supports1mContext: raw.supports_1m_context === true,
   }
 }
 
@@ -143,7 +144,11 @@ function buildUpdateBody(payload: ModelProviderUpdate): Record<string, unknown> 
   if (payload.baseUrl !== undefined) body.base_url = payload.baseUrl
   if (payload.apiKeys !== undefined) body.api_keys = payload.apiKeys.map(toApiKeyInputWire)
   if (payload.models !== undefined) {
-    body.models = payload.models.map((m) => ({ model_id: m.modelId, enabled: m.enabled }))
+    body.models = payload.models.map((m) => ({
+      model_id: m.modelId,
+      enabled: m.enabled,
+      supports_1m_context: m.supports1mContext,
+    }))
   }
   return body
 }

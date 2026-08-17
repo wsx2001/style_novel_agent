@@ -64,3 +64,17 @@ class CandidateCard(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     content_json: dict = Field(default_factory=dict)
     snippet_ids: list[str] = Field(default_factory=list)
+
+
+class ParseResultRead(BaseModel):
+    """查询已解析结果的响应体（GET /documents/{id}/parse-result）。
+
+    对应解析完成后暂存在 Document.parse_result_json 中的内容：candidates 为候选
+    卡片；threshold / manual_confirm / extracted_at 为解析参数。前端在刷新页面后
+    据此恢复候选卡片，继续确认导入。
+    """
+
+    candidates: list[CandidateCard] = Field(default_factory=list)
+    threshold: ParseThreshold = "medium"
+    manual_confirm: bool = True
+    extracted_at: Optional[str] = None

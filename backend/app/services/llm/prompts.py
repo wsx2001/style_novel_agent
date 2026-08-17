@@ -32,6 +32,13 @@ EXTRACTION_SYSTEM_PROMPT = """你是一名专业的文学设定抽取助手，�
 - terms：术语（专有名词、特殊概念及其定义）
 - keyEvents：关键事件（剧情中的重要事件、转折点）
 
+【抽取标准】
+- 只抽取贯穿剧情、身份明确、推动情节的主要角色；一笔带过、仅出场一次、
+  无后续作用的背景人物不要抽取
+- 只抽取显著且贯穿全文的世界观设定；零散单次描写不抽取
+- 同一人物多次出现只保留一条，使用最规范的姓名，避免同一实体的不同写法并存
+- 控制数量：每类只保留最重要、最常用的条目，宁缺毋滥
+
 【输出要求】
 - 只输出一个 JSON 对象，不要输出任何解释、前缀或 markdown 标记
 - JSON 结构严格如下：
@@ -53,8 +60,35 @@ EXTRACTION_USER_PROMPT_TEMPLATE = """请从以下文档片段中抽取设定信�
 {chunk}
 
 【抽取要求】
-- 仅依据片段内容，不推测片段之外的设定
+- 仅依据给定文本内容，不推测文本未出现的信息
 - 若片段不含某类信息，该类返回空数组（style 返回空对象）"""
+
+
+# 文档设定抽取：候选卡合并去重系统提示（{{MAX_*}} 占位符由 extractor 注入）
+EXTRACTION_CONSOLIDATION_SYSTEM_PROMPT = """你是一名小说设定整理助手。以下是按小说全文分片抽取后得到的候选设定列表，其中包含大量重复、相似或琐碎的条目。请合并去重，输出一份精简、无冲突的最终设定。
+
+【合并规则】
+- characters：同一个人物（含简称、错字、同人异名，如「李明」与「李明（主角）」）合并为一条，
+  取最规范的名字、最完整的描述；只保留贯穿剧情或身份明确的主要角色，删除仅出场一次、
+  无后续作用的背景路人
+- worldSettings：同一设定（同义描述、同一地点/体系的不同说法）合并为一条；删除零散单次描写
+- terms：同义术语合并为一条
+- keyEvents：同一事件的重复条目合并为一条
+- style：从所有候选 style 中综合出一份最完整文风设定（仍为单个对象）
+- 每类数量上限：characters 最多 {{MAX_CHARACTERS}} 条，worldSettings 最多 {{MAX_WORLD}} 条，
+  terms 最多 {{MAX_TERMS}} 条，keyEvents 最多 {{MAX_EVENTS}} 条；超限时优先保留重要度高的条目
+
+【输出要求】
+- 只输出一个 JSON 对象，不要输出任何解释、前缀或 markdown 标记
+- 结构严格为：{"style": {"...": "..."}, "characters": [{"name": "...", "description": "..."}],
+  "worldSettings": [{"title": "...", "content": "..."}], "terms": [{"term": "...", "definition": "..."}],
+  "keyEvents": [{"title": "...", "time": "...", "description": "..."}]}
+- 每条内容简洁、可独立理解；严禁编造原文未出现的信息
+- 某类为空返回空数组（style 返回空对象）"""
+
+# 文档设定抽取：候选卡合并去重用户提示模板（{cards_json} 为压缩后的候选卡 JSON）
+EXTRACTION_CONSOLIDATION_USER_TEMPLATE = """以下是候选设定列表（JSON 数组，含类型/标题/内容）。请按系统要求合并去重并输出精简 JSON，只输出 JSON：
+{cards_json}"""
 
 
 def candidate_delimiter_list(count: int = 3) -> str:
@@ -183,6 +217,8 @@ DEFAULT_SYSTEM_PROMPT_CONTENT = """你是一名专业的中文小说创作助手
 
 # 对话历史注入上限（docs/TECHv1.md §7.3：最近 20 条）
 CONVERSATION_HISTORY_LIMIT = 20
+# 模型开启「1M 上下文」时放宽到最近 100 条（docs/TECHv1.1.md §4.2，长对话可记住更多前文）
+CONVERSATION_HISTORY_LIMIT_1M = 100
 
 
 def render_system_prompt(template_content: str, context: dict) -> str:
@@ -245,16 +281,23 @@ def _format_style_card(style_card: Optional[KnowledgeCard]) -> str:
 
 
 async def _format_conversation_history(
-    db: AsyncSession, conversation: Optional[Conversation]
+    db: AsyncSession,
+    conversation: Optional[Conversation],
+    *,
+    history_limit: int = CONVERSATION_HISTORY_LIMIT,
 ) -> str:
-    """格式化最近 N 条对话历史（时间正序）。"""
+    """格式化最近 N 条对话历史（时间正序）。
+
+    history_limit 由调用方按模型是否开启 1M 上下文决定（1M 模型放宽到
+    CONVERSATION_HISTORY_LIMIT_1M）。
+    """
     if conversation is None:
         return ""
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation.id)
         .order_by(Message.created_at.desc())
-        .limit(CONVERSATION_HISTORY_LIMIT)
+        .limit(history_limit)
     )
     messages = list(reversed(result.scalars().all()))
     if not messages:
@@ -270,12 +313,16 @@ async def build_context_for_prompt(
     user_input: Optional[str] = None,
     knowledge_cards: Optional[list[KnowledgeCard]] = None,
     style_card: Optional[KnowledgeCard] = None,
+    history_limit: Optional[int] = None,
 ) -> dict[str, str]:
     """构建系统提示词渲染所需的上下文字典。
 
     返回字典的键与占位符一一对应（PROJECT_INFO / CURRENT_CHAPTER /
     KNOWLEDGE_BASE / STYLE_CARD / USER_INPUT / CONVERSATION_HISTORY），
     值均为字符串，可直接传给 render_system_prompt / get_effective_system_prompt。
+
+    history_limit：会话注入的最近消息条数（缺省 CONVERSATION_HISTORY_LIMIT，
+    1M 模型由调用方传入 CONVERSATION_HISTORY_LIMIT_1M）。
     """
     project = await db.get(Project, project_id) if project_id else None
     chapter = await db.get(Chapter, chapter_id) if chapter_id else None
@@ -285,7 +332,15 @@ async def build_context_for_prompt(
         "KNOWLEDGE_BASE": _format_knowledge_base(knowledge_cards or []),
         "STYLE_CARD": _format_style_card(style_card),
         "USER_INPUT": user_input or "",
-        "CONVERSATION_HISTORY": await _format_conversation_history(db, conversation),
+        "CONVERSATION_HISTORY": await _format_conversation_history(
+            db,
+            conversation,
+            history_limit=(
+                history_limit
+                if history_limit is not None
+                else CONVERSATION_HISTORY_LIMIT
+            ),
+        ),
     }
 
 

@@ -1,5 +1,13 @@
 import client from './client'
-import type { Document, CandidateCard, ConfirmImportRequest, KnowledgeCard } from '@/types'
+import { streamSSE, type SSEEvent } from '@/lib/sse'
+import type {
+  CandidateCard,
+  ConfirmImportRequest,
+  Document,
+  KnowledgeCard,
+  ParseResult,
+  ParseThreshold,
+} from '@/types'
 
 /** 文档分块预览（POST /documents/{id}/confirm-import 前的片段） */
 export interface SnippetChunk {
@@ -14,6 +22,23 @@ export interface SnippetChunk {
 export interface ConfirmImportResult {
   cards: KnowledgeCard[]
   snippet_count: number
+}
+
+/** 解析进度帧（event: progress 的 data） */
+export interface ParseProgressFrame {
+  index: number
+  total: number
+  label: string
+  status: 'start' | 'done' | 'error' | 'skipped'
+  /** 简略结果（status=done）：类别 → 数量 */
+  result?: Record<string, number>
+}
+
+/** 流式解析回调 */
+export interface ParseHandlers {
+  onProgress: (frame: ParseProgressFrame) => void
+  onDone: (candidates: CandidateCard[]) => void
+  onError: (message: string) => void
 }
 
 /**
@@ -47,16 +72,47 @@ export const documentsApi = {
     return data
   },
 
-  /** POST /documents/{document_id}/parse —— 触发 LLM 抽取候选卡片 */
-  async parse(documentId: string, payload?: { threshold?: string; manual_confirm?: boolean }): Promise<CandidateCard[]> {
-    const { data } = await client.post<CandidateCard[]>(`/documents/${documentId}/parse`, payload ?? {})
-    return data
+  /** POST /documents/{document_id}/parse —— 触发 LLM 抽取候选卡片（SSE 流式，含分块进度）。
+   * 事件：progress（进度帧）/ done（candidates）/ error（message）。 */
+  async parseStream(
+    documentId: string,
+    payload: { threshold?: string; manual_confirm?: boolean } | undefined,
+    handlers: ParseHandlers,
+  ): Promise<void> {
+    let error: string | null = null
+    await streamSSE(
+      `/api/v1/documents/${documentId}/parse`,
+      payload ?? {},
+      (ev: SSEEvent) => {
+        if (ev.event === 'progress') {
+          handlers.onProgress(JSON.parse(ev.data) as ParseProgressFrame)
+        } else if (ev.event === 'done') {
+          const { candidates } = JSON.parse(ev.data) as { candidates: CandidateCard[] }
+          handlers.onDone(candidates)
+        } else if (ev.event === 'error') {
+          const { message } = JSON.parse(ev.data) as { message: string }
+          error = message
+        }
+      },
+    )
+    if (error) handlers.onError(error)
   },
 
   /** GET /documents/{document_id}/chunks —— 分块预览 */
   async chunks(documentId: string): Promise<SnippetChunk[]> {
     const { data } = await client.get<SnippetChunk[]>(`/documents/${documentId}/chunks`)
     return data
+  },
+
+  /** GET /documents/{document_id}/parse-result —— 查询已解析结果（刷新后恢复候选卡片继续导入） */
+  async parseResult(documentId: string): Promise<ParseResult> {
+    const { data } = await client.get<Record<string, unknown>>(`/documents/${documentId}/parse-result`)
+    return {
+      candidates: Array.isArray(data.candidates) ? (data.candidates as CandidateCard[]) : [],
+      threshold: (data.threshold as ParseThreshold) ?? 'medium',
+      manual_confirm: data.manual_confirm !== false,
+      extracted_at: (data.extracted_at as string | null) ?? null,
+    }
   },
 
   /** POST /documents/{document_id}/confirm-import —— 确认导入知识库 */

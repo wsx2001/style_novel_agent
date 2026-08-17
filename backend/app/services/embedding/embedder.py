@@ -11,11 +11,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 
 from openai import AsyncOpenAI
 
 from ..llm.client import DEFAULT_TIMEOUT
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_BATCH_SIZE = 32
@@ -77,3 +80,24 @@ class LocalHashEmbedder:
                 vector[h % self.dim] += 1.0 if (h >> 8) & 1 else -1.0
         norm = math.sqrt(sum(v * v for v in vector)) or 1.0
         return [v / norm for v in vector]
+
+
+class FallbackEmbedder:
+    """远程 embedding 失败时回退本地哈希向量（Composite 嵌入器）。
+
+    在单个 HybridRetriever / Chroma 客户端内完成降级：远程向量化抛错（提供商
+    缺少该模型 404 / 网络异常等）时改用 LocalHashEmbedder 的结果返回。调用方
+    用一个 retriever 即可，避免在失败后再新建第二个 Chroma PersistentClient
+    ——同路径二次打开会触发底层段错误、拖垮整个后端进程。
+    """
+
+    def __init__(self, remote: Embedder, local: LocalHashEmbedder) -> None:
+        self._remote = remote
+        self._local = local
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        try:
+            return await self._remote.embed_texts(texts)
+        except Exception as exc:  # noqa: BLE001 - 任何远程失败都回退本地向量
+            logger.warning("远程 embedding 失败，回退本地哈希向量：%s", exc)
+            return await self._local.embed_texts(texts)

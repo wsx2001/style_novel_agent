@@ -39,6 +39,12 @@ class _UnusedEmbeddingFunction(EmbeddingFunction):
 
 _UNUSED_EF = _UnusedEmbeddingFunction()
 
+# 每次 collection.upsert 的批大小：低于 chroma-hnswlib 0.7.6 在 Windows 上单次写入
+# ≥ ~100 条时触发 MSVCP140.dll ACCESS_VIOLATION（0xC0000005）的阈值；分批后单次
+# upsert 不会达到 resize 临界，单进程不再被原生代码拖死。保留余量（实际触发约 100，
+# 阈值取 64 留一档）。
+UPSERT_BATCH_SIZE = 64
+
 
 class HybridRetriever:
     """Chroma PersistentClient 的轻量封装：项目级 collection + snippet upsert/query。"""
@@ -72,6 +78,11 @@ class HybridRetriever:
         """批量生成 embedding 并写入项目 collection，返回写入条数。
 
         snippets 元素字段：id / text / tags / document_id / card_id。
+
+        分批写入：chroma-hnswlib 0.7.6 在 Windows 上单次 upsert ≥ ~100 条时会触发
+        MSVCP140.dll 原生段错误（0xC0000005），通过把一次写入切成 ≤UPSERT_BATCH_SIZE
+        的小批来绕开。每批独立写入 Chroma，分批失败时上层（`confirm_import`）捕获
+        并返回 502。
         """
         if not snippets:
             return 0
@@ -89,10 +100,16 @@ class HybridRetriever:
             for snip in snippets
         ]
         collection = self._collection(project_id)
-        collection.upsert(
-            ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
-        )
-        return len(snippets)
+        total = len(snippets)
+        for start in range(0, total, UPSERT_BATCH_SIZE):
+            end = start + UPSERT_BATCH_SIZE
+            collection.upsert(
+                ids=ids[start:end],
+                embeddings=embeddings[start:end],
+                documents=texts[start:end],
+                metadatas=metadatas[start:end],
+            )
+        return total
 
     async def query_snippets(
         self, project_id: str, query_text: str, top_k: int = 10

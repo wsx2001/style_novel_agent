@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
-import { documentsApi, type SnippetChunk } from '@/api/documents'
+import { documentsApi } from '@/api/documents'
 import { getErrorMessage } from '@/api/client'
 import { UploadZone } from '@/components/documents/UploadZone'
 import { ParseCandidates } from '@/components/documents/ParseCandidates'
+import { ParseProgressPanel } from '@/components/documents/ParseProgressPanel'
+import { useParseSessionStore } from '@/store/parseSession'
 import { cn } from '@/lib/utils'
-import type { CandidateCard, Document, DocumentStatus } from '@/types'
+import type { Document, DocumentStatus } from '@/types'
 
 /** 文档状态中文名与颜色 */
 const STATUS_META: Record<DocumentStatus, { label: string; className: string }> = {
@@ -27,10 +29,29 @@ function formatSize(bytes: number): string {
  * - 拖拽上传 txt / md / docx
  * - 文档列表 + 「解析」按钮（LLM 抽取候选卡片）
  * - 候选卡片勾选确认 → 导入知识库
+ *
+ * 解析进度与结果存于全局 store（store/parseSession.ts）：切换页面不丢失，
+ * 刷新后可通过「查看解析结果」从后端恢复候选继续导入。
  */
 export default function DocumentParse() {
   const { projectId } = useParams<{ projectId: string }>()
   const queryClient = useQueryClient()
+
+  // 解析会话来自全局 store（跨页保留 / 后端可恢复）
+  const parseStatus = useParseSessionStore((s) => s.status)
+  const parseDocumentId = useParseSessionStore((s) => s.documentId)
+  const parseTarget = useParseSessionStore((s) => s.parseTarget)
+  const progressUnits = useParseSessionStore((s) => s.progressUnits)
+  const progressTotal = useParseSessionStore((s) => s.progressTotal)
+  const candidates = useParseSessionStore((s) => s.candidates)
+  const chunks = useParseSessionStore((s) => s.chunks)
+  const parseError = useParseSessionStore((s) => s.error)
+  const startParse = useParseSessionStore((s) => s.startParse)
+  const restoreParseResult = useParseSessionStore((s) => s.restoreParseResult)
+  const clearParse = useParseSessionStore((s) => s.clear)
+
+  // 上传错误独立于解析会话（解析错误在 store.error）
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ['documents', projectId],
@@ -41,34 +62,18 @@ export default function DocumentParse() {
   const uploadMutation = useMutation({
     mutationFn: (file: File) => documentsApi.upload(projectId!, file),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['documents', projectId] }),
-    onError: (err) => setError(getErrorMessage(err)),
+    onError: (err) => setUploadError(getErrorMessage(err)),
   })
 
-  // 解析结果（一次一个文档）
-  const [parsingId, setParsingId] = useState<string | null>(null)
-  const [candidates, setCandidates] = useState<CandidateCard[] | null>(null)
-  const [chunks, setChunks] = useState<SnippetChunk[]>([])
-  const [parseTarget, setParseTarget] = useState<Document | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleParse = async (doc: Document) => {
-    setError(null)
-    setParsingId(doc.id)
-    try {
-      const [cands, chunkList] = await Promise.all([
-        documentsApi.parse(doc.id, { threshold: doc.parse_threshold }),
-        documentsApi.chunks(doc.id),
-      ])
-      setCandidates(cands)
-      setChunks(chunkList)
-      setParseTarget(doc)
-    } catch (err) {
-      setError(getErrorMessage(err))
-      setCandidates(null)
-    } finally {
-      setParsingId(null)
+  // 解析完成/失败后刷新文档列表状态（解析中 → 已解析/失败）
+  useEffect(() => {
+    if (parseStatus === 'done' || parseStatus === 'error') {
+      queryClient.invalidateQueries({ queryKey: ['documents', projectId] })
     }
-  }
+  }, [parseStatus, projectId, queryClient])
+
+  const isBusy = parseStatus === 'running'
+  const isActiveDoc = (doc: Document) => parseDocumentId === doc.id
 
   return (
     <div className="min-h-full space-y-5 bg-background px-6 py-6">
@@ -82,9 +87,7 @@ export default function DocumentParse() {
         disabled={uploadMutation.isPending}
       />
       {uploadMutation.isPending && <p className="text-sm text-slate-400">上传中…</p>}
-      {uploadMutation.isError && (
-        <p className="text-xs text-danger">{getErrorMessage(uploadMutation.error)}</p>
-      )}
+      {uploadError && <p className="text-xs text-danger">{uploadError}</p>}
 
       {/* 文档列表 */}
       <section className="overflow-hidden rounded-xl border border-border bg-card">
@@ -98,6 +101,7 @@ export default function DocumentParse() {
         <ul className="divide-y divide-border">
           {documents.map((doc) => {
             const status = STATUS_META[doc.status]
+            const isCurrent = isActiveDoc(doc)
             return (
               <li key={doc.id} className="flex items-center gap-3 px-4 py-2.5">
                 <div className="min-w-0 flex-1">
@@ -110,12 +114,20 @@ export default function DocumentParse() {
                 <span className={cn('rounded px-2 py-0.5 text-xs font-medium', status.className)}>
                   {status.label}
                 </span>
+                {doc.status === 'parsed' && !isBusy && !(parseStatus === 'done' && isCurrent) && (
+                  <button
+                    className="rounded-md border border-border px-2 py-1 text-xs text-slate-600 hover:border-primary/40 hover:text-foreground"
+                    onClick={() => restoreParseResult(doc, projectId!)}
+                  >
+                    查看解析结果
+                  </button>
+                )}
                 <button
                   className="rounded-md border border-primary px-3 py-1 text-sm font-medium text-primary hover:bg-primary/5 disabled:opacity-50"
-                  disabled={parsingId !== null || doc.status === 'parsing'}
-                  onClick={() => handleParse(doc)}
+                  disabled={isBusy}
+                  onClick={() => startParse(doc, projectId!, doc.parse_threshold)}
                 >
-                  {parsingId === doc.id ? '解析中…' : doc.status === 'parsed' ? '重新解析' : '解析'}
+                  {isBusy && isCurrent ? '解析中…' : doc.status === 'parsed' ? '重新解析' : '解析'}
                 </button>
               </li>
             )
@@ -123,18 +135,20 @@ export default function DocumentParse() {
         </ul>
       </section>
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {parseError && <p className="text-sm text-danger">{parseError}</p>}
 
-      {/* 解析候选卡片确认 */}
-      {candidates && projectId && parseTarget && (
+      {/* 解析进度面板（流式期间实时更新；跨页时由全局悬浮面板承接） */}
+      {isBusy && <ParseProgressPanel total={progressTotal} units={progressUnits} />}
+
+      {/* 解析候选卡片确认（跨页/刷新后恢复的候选同样在此渲染） */}
+      {candidates && projectId && parseTarget && parseTarget.project_id === projectId && (
         <ParseCandidates
           projectId={projectId}
           documentId={parseTarget.id}
           candidates={candidates}
           chunks={chunks}
           onImported={() => {
-            setCandidates(null)
-            setParseTarget(null)
+            clearParse()
             queryClient.invalidateQueries({ queryKey: ['documents', projectId] })
           }}
         />

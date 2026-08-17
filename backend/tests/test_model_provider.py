@@ -16,8 +16,9 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app.models import Conversation, GenerationRecord, ModelProvider, Project
+from app.models import AppConfig, Conversation, GenerationRecord, ModelProvider, Project
 from app.services.crypto.api_key import decrypt_api_key, encrypt_api_key
+from app.services.llm.resolve import resolve_supports_1m
 from app.services.model_provider import (
     NoAvailableApiKey,
     _is_masked_key,
@@ -30,6 +31,7 @@ from app.services.model_provider import (
     fetch_model_list,
     get_provider,
     list_providers,
+    model_supports_1m,
     select_api_key,
     update_provider,
 )
@@ -274,8 +276,8 @@ async def test_update_provider_models_and_meta_fields(session_factory):
     assert updated.name == "改名"
     assert updated.base_url == "https://api.deepseek.com/v1"  # 已 strip
     assert updated.models_json == [
-        {"model_id": "gpt-4o", "enabled": True},
-        {"model_id": "gpt-4o-mini", "enabled": False},
+        {"model_id": "gpt-4o", "enabled": True, "supports_1m_context": False},
+        {"model_id": "gpt-4o-mini", "enabled": False, "supports_1m_context": False},
     ]
 
 
@@ -469,9 +471,9 @@ async def test_fetch_model_list_merges_and_updates_available_models(
     async with session_factory() as session:
         row = await session.get(ModelProvider, provider.id)
         assert row.models_json == [
-            {"model_id": "gpt-4o", "enabled": True},
-            {"model_id": "gpt-4o-mini", "enabled": True},
-            {"model_id": "gpt-4o-turbo", "enabled": True},
+            {"model_id": "gpt-4o", "enabled": True, "supports_1m_context": False},
+            {"model_id": "gpt-4o-mini", "enabled": True, "supports_1m_context": False},
+            {"model_id": "gpt-4o-turbo", "enabled": True, "supports_1m_context": False},
         ]
         by_key = {k["key_id"]: k["available_models"] for k in row.api_keys_json}
         assert by_key[provider.api_keys_json[0]["key_id"]] == ["gpt-4o", "gpt-4o-mini"]
@@ -497,8 +499,51 @@ async def test_fetch_model_list_preserves_manual_models(session_factory, http_cl
     async with session_factory() as session:
         row = await session.get(ModelProvider, provider.id)
         assert row.models_json == [
-            {"model_id": "manual-model", "enabled": False},  # 手动模型保留
-            {"model_id": "gpt-4o", "enabled": True},
+            {"model_id": "manual-model", "enabled": False, "supports_1m_context": False},  # 手动模型保留
+            {"model_id": "gpt-4o", "enabled": True, "supports_1m_context": False},
+        ]
+
+
+async def test_supports_1m_context_preserved_across_updates(
+    session_factory, http_client_factory
+):
+    """新字段 supports_1m_context：PATCH 全量替换未显式携带、fetch-models 刷新时都保留。"""
+    provider = await _create_provider(
+        session_factory,
+        base_url="https://api.openai.com/v1",
+        api_keys=[{"key": "sk-key1-1111", "enabled": True, "priority": 1}],
+    )
+
+    # 1) PATCH 设置 1M 开关
+    async with session_factory() as session:
+        updated = await update_provider(
+            session,
+            provider.id,
+            models=[{"model_id": "gpt-4o", "enabled": True, "supports_1m_context": True}],
+        )
+    assert updated.models_json == [
+        {"model_id": "gpt-4o", "enabled": True, "supports_1m_context": True}
+    ]
+
+    # 2) 再次 PATCH 未显式带开关（旧前端）→ 沿用既有 True
+    async with session_factory() as session:
+        updated = await update_provider(
+            session, provider.id, models=[{"model_id": "gpt-4o", "enabled": True}]
+        )
+    assert updated.models_json == [
+        {"model_id": "gpt-4o", "enabled": True, "supports_1m_context": True}
+    ]
+
+    # 3) fetch-models 刷新 → 保留既有 True
+    client = http_client_factory(
+        lambda req: httpx.Response(200, json=_models_response("gpt-4o"))
+    )
+    async with session_factory() as session:
+        await fetch_model_list(session, provider.id, http_client=client)
+    async with session_factory() as session:
+        row = await session.get(ModelProvider, provider.id)
+        assert row.models_json == [
+            {"model_id": "gpt-4o", "enabled": True, "supports_1m_context": True}
         ]
 
 
@@ -784,3 +829,94 @@ def test_encrypt_roundtrip(tmp_data_dir):
     encrypted = encrypt_api_key("sk-secret-key")
     assert encrypted != "sk-secret-key"
     assert decrypt_api_key(encrypted) == "sk-secret-key"
+
+
+# ---------------------------------------------------------------------------
+# 1M 上下文支持判定（docs/TECHv1.1.md §4.2）
+# ---------------------------------------------------------------------------
+
+
+def test_model_supports_1m_reads_flag():
+    """model_supports_1m：按 model_id 读取 models_json 的标记，缺省 False。"""
+    provider = ModelProvider(
+        name="测试",
+        type="openai",
+        models_json=[
+            {"model_id": "normal", "enabled": True},
+            {"model_id": "big", "enabled": True, "supports_1m_context": True},
+        ],
+    )
+    assert model_supports_1m(provider, "big") is True
+    assert model_supports_1m(provider, "normal") is False
+    assert model_supports_1m(provider, "unknown-model") is False
+    assert model_supports_1m(provider, None) is False
+    assert model_supports_1m(ModelProvider(name="空", type="openai"), "any") is False
+
+
+async def test_resolve_supports_1m_scope_chain(session_factory):
+    """resolve_supports_1m：None 配置 → 项目 use_1m_context → 全局 → 模型标记。"""
+    provider_obj = ModelProvider(
+        name="测试", type="openai", models_json=[{"model_id": "big", "enabled": True}]
+    )
+    async with session_factory() as session:
+        session.add(provider_obj)
+        await session.commit()
+        await session.refresh(provider_obj)
+
+    # 1) 无任何配置 → 仅模型标记（默认 False）
+    async with session_factory() as session:
+        assert (
+            await resolve_supports_1m(session, provider_obj, "big")
+        ) is False
+
+    # 2) 项目 default_model_config 开启 use_1m_context → True
+    project = Project(title="测试项目", default_model_config={"use_1m_context": True})
+    async with session_factory() as session:
+        session.add(project)
+        await session.commit()
+        await session.refresh(project)
+        assert (
+            await resolve_supports_1m(
+                session, provider_obj, "big", project_id=project.id
+            )
+        ) is True
+
+    # 3) 全局默认模型配置开启 use_1m_context → 无项目时也生效
+    async with session_factory() as session:
+        session.add(
+            AppConfig(
+                key="global_default_model_config", value={"use_1m_context": True}
+            )
+        )
+        await session.commit()
+        assert (
+            await resolve_supports_1m(session, provider_obj, "big")
+        ) is True
+
+    # 4) config_override（请求显式）优先 → 即使项目/全局未开也生效
+    async with session_factory() as session:
+        assert (
+            await resolve_supports_1m(
+                session,
+                provider_obj,
+                "big",
+                project_id=project.id,
+                config_override={"use_1m_context": True},
+            )
+        ) is True
+
+    # 5) 模型自身 supports_1m_context 标记 → 无任何作用域配置也生效
+    provider_with_flag = ModelProvider(
+        name="带标记",
+        type="openai",
+        models_json=[
+            {"model_id": "big", "enabled": True, "supports_1m_context": True}
+        ],
+    )
+    async with session_factory() as session:
+        session.add(provider_with_flag)
+        await session.commit()
+        await session.refresh(provider_with_flag)
+        assert (
+            await resolve_supports_1m(session, provider_with_flag, "big")
+        ) is True

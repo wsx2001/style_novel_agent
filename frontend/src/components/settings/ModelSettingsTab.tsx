@@ -17,6 +17,8 @@ export interface NormalizedModelConfig {
   depth: DepthLevel
   temperature: number
   maxTokens: number
+  /** 是否按 1M 上下文放开限制（文档整篇解析 / 对话历史 / 续写重写上下文） */
+  use1mContext: boolean
 }
 
 interface ModelSettingsTabProps {
@@ -41,6 +43,7 @@ export default function ModelSettingsTab({
   const [depth, setDepth] = useState<DepthLevel>(initialConfig.depth)
   const [temperature, setTemperature] = useState(initialConfig.temperature)
   const [maxTokens, setMaxTokens] = useState(initialConfig.maxTokens)
+  const [use1mContext, setUse1mContext] = useState(initialConfig.use1mContext)
 
   const active = DEPTH_OPTIONS.find((d) => d.value === depth)
 
@@ -124,6 +127,28 @@ export default function ModelSettingsTab({
         />
       </section>
 
+      {/* 1M 上下文（对范围内所选模型统一放开上下文限制） */}
+      <section>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-foreground">1M 上下文</h3>
+            <p className="mt-0.5 text-xs text-slate-400">
+              开启后该作用域所选模型按 1M 上下文使用：文档解析整篇喂入、对话历史与续写/重写上下文放宽（需模型真支持 1M）
+            </p>
+          </div>
+          <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={use1mContext}
+              disabled={loading}
+              onChange={(e) => setUse1mContext(e.target.checked)}
+              className="h-4 w-4 accent-primary"
+            />
+            启用
+          </label>
+        </div>
+      </section>
+
       <div className="border-t border-border pt-3">
         <p className="mb-2 text-[11px] text-slate-400">
           保存后，新设置将应用于后续消息，不影响已有消息。
@@ -131,7 +156,7 @@ export default function ModelSettingsTab({
         <button
           type="button"
           disabled={loading || saving}
-          onClick={() => onSave({ depth, temperature, maxTokens })}
+          onClick={() => onSave({ depth, temperature, maxTokens, use1mContext })}
           className={cn(
             'w-full rounded-md px-4 py-2 text-sm font-medium text-primary-foreground transition-colors',
             saving ? 'bg-primary/60' : 'bg-primary hover:bg-primary-hover',

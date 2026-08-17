@@ -35,10 +35,12 @@ export interface ApiKeyInfo {
   availableModels?: string[]
 }
 
-/** 模型列表项（modelId + 启用状态，docs/TECHv1.1.md §4.2） */
+/** 模型列表项（modelId + 启用状态 + 是否支持 1M 上下文，docs/TECHv1.1.md §4.2） */
 export interface ModelItem {
   modelId: string
   enabled: boolean
+  /** 是否支持 1M 上下文窗口；开启后文档解析对 ≤1MB 文件整篇喂入 LLM（docs/TECH.md §5.2） */
+  supports1mContext: boolean
 }
 
 /** 提供商派生状态：ready 有启用 Key 可用于生成 | no_keys 无启用 Key */

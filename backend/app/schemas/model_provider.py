@@ -38,10 +38,16 @@ class ApiKeyInput(BaseModel):
 
 
 class ModelItem(BaseModel):
-    """模型列表项（model_id + 启用状态）。"""
+    """模型列表项（model_id + 启用状态 + 是否支持 1M 上下文）。
+
+    supports_1m_context：模型是否支持 1M 上下文窗口。开启后文档解析对
+    ≤1MB 的文件整篇喂入 LLM（docs/TECH.md §5.2）；未开启则按保守字符
+    阈值判定，避免超大文本超模型上下文。
+    """
 
     model_id: str = Field(..., min_length=1, max_length=255)
     enabled: bool = True
+    supports_1m_context: bool = False
 
 
 class ModelProviderCreate(BaseModel):

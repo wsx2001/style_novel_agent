@@ -20,11 +20,11 @@ interface ModelPromptSettingsProps {
   conversationId?: string | null
 }
 
-const DEFAULT_CONFIG: NormalizedModelConfig = { depth: 'auto', temperature: 0.7, maxTokens: 0 }
+const DEFAULT_CONFIG: NormalizedModelConfig = { depth: 'auto', temperature: 0.7, maxTokens: 0, use1mContext: false }
 
 const DEPTH_VALUES: DepthLevel[] = ['none', 'auto', 'low', 'medium', 'high', 'extreme']
 
-/** 将作用域配置归一化为表单值（兼容 snake `max_tokens` 与 camel `maxTokens`） */
+/** 将作用域配置归一化为表单值（兼容 snake `max_tokens`/`use_1m_context` 与 camel `maxTokens`/`use1mContext`） */
 function normalizeConfig(cfg: Record<string, unknown> | undefined): NormalizedModelConfig {
   const temperature =
     typeof cfg?.temperature === 'number'
@@ -40,10 +40,12 @@ function normalizeConfig(cfg: Record<string, unknown> | undefined): NormalizedMo
         ? Number(rawMax)
         : DEFAULT_CONFIG.maxTokens
   const depth = DEPTH_VALUES.includes(cfg?.depth as DepthLevel) ? (cfg?.depth as DepthLevel) : DEFAULT_CONFIG.depth
+  const raw1m = (cfg?.use_1m_context ?? cfg?.use1mContext) as unknown
   return {
     depth,
     temperature: Number.isFinite(temperature) ? temperature : DEFAULT_CONFIG.temperature,
     maxTokens: Number.isFinite(maxTokens) ? maxTokens : DEFAULT_CONFIG.maxTokens,
+    use1mContext: raw1m === true || raw1m === 'true',
   }
 }
 
@@ -173,10 +175,20 @@ export default function ModelPromptSettings({
     mutationFn: (config: NormalizedModelConfig): Promise<unknown> => {
       if (scope === 'conversation') {
         return conversationsApi.updateConversation(conversationId!, {
-          modelConfig: { depth: config.depth, temperature: config.temperature, maxTokens: config.maxTokens },
+          modelConfig: {
+            depth: config.depth,
+            temperature: config.temperature,
+            maxTokens: config.maxTokens,
+            use1mContext: config.use1mContext,
+          },
         })
       }
-      const wire = { depth: config.depth, temperature: config.temperature, max_tokens: config.maxTokens }
+      const wire = {
+        depth: config.depth,
+        temperature: config.temperature,
+        max_tokens: config.maxTokens,
+        use_1m_context: config.use1mContext,
+      }
       return scope === 'project'
         ? projectsApi.update(projectId!, { default_model_config: wire })
         : settingsApi.updateAppSettings({ global_default_model_config: wire })

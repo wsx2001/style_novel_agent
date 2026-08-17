@@ -25,10 +25,11 @@ interface KeyDraft {
   priority: number
 }
 
-/** 表单中的模型草稿（modelId + 启用状态） */
+/** 表单中的模型草稿（modelId + 启用状态 + 是否支持 1M 上下文） */
 interface ModelDraft {
   modelId: string
   enabled: boolean
+  supports1mContext: boolean
 }
 
 interface ModelProviderFormProps {
@@ -83,7 +84,13 @@ export default function ModelProviderForm({ providerId, onClose, onSaved }: Mode
             ? detail.apiKeys.map((k) => ({ keyId: k.keyId, key: k.keyMasked, enabled: k.enabled, priority: k.priority }))
             : [emptyKey()],
         )
-        setModels(detail.models.map((m) => ({ modelId: m.modelId, enabled: m.enabled })))
+        setModels(
+          detail.models.map((m) => ({
+            modelId: m.modelId,
+            enabled: m.enabled,
+            supports1mContext: m.supports1mContext,
+          })),
+        )
         setProviderIdState(detail.id)
       })
       .catch((err) => {
@@ -148,10 +155,14 @@ export default function ModelProviderForm({ providerId, onClose, onSaved }: Mode
   // ---- 模型操作 ----
   const toggleModel = (modelId: string) =>
     setModels((prev) => prev.map((m) => (m.modelId === modelId ? { ...m, enabled: !m.enabled } : m)))
+  const toggleModel1m = (modelId: string) =>
+    setModels((prev) =>
+      prev.map((m) => (m.modelId === modelId ? { ...m, supports1mContext: !m.supports1mContext } : m)),
+    )
   const addManualModel = () => {
     const id = manualModel.trim()
     if (!id || models.some((m) => m.modelId === id)) return
-    setModels((prev) => [...prev, { modelId: id, enabled: true }])
+    setModels((prev) => [...prev, { modelId: id, enabled: true, supports1mContext: false }])
     setManualModel('')
   }
 
@@ -196,10 +207,22 @@ export default function ModelProviderForm({ providerId, onClose, onSaved }: Mode
         : [emptyKey()],
     )
     if (opts?.preserveModelToggles) {
-      const current = new Map(models.map((m) => [m.modelId, m.enabled]))
-      setModels(detail.models.map((m) => ({ modelId: m.modelId, enabled: current.get(m.modelId) ?? m.enabled })))
+      const current = new Map(models.map((m) => [m.modelId, m]))
+      setModels(
+        detail.models.map((m) => ({
+          modelId: m.modelId,
+          enabled: current.get(m.modelId)?.enabled ?? m.enabled,
+          supports1mContext: current.get(m.modelId)?.supports1mContext ?? m.supports1mContext,
+        })),
+      )
     } else {
-      setModels(detail.models.map((m) => ({ modelId: m.modelId, enabled: m.enabled })))
+      setModels(
+        detail.models.map((m) => ({
+          modelId: m.modelId,
+          enabled: m.enabled,
+          supports1mContext: m.supports1mContext,
+        })),
+      )
     }
   }
 
@@ -265,7 +288,11 @@ export default function ModelProviderForm({ providerId, onClose, onSaved }: Mode
           type,
           baseUrl: baseUrl.trim() || null,
           apiKeys: keysToWire(),
-          models: models.map((m) => ({ modelId: m.modelId, enabled: m.enabled })),
+          models: models.map((m) => ({
+            modelId: m.modelId,
+            enabled: m.enabled,
+            supports1mContext: m.supports1mContext,
+          })),
         })
         message = '已保存修改'
       }
@@ -478,14 +505,15 @@ export default function ModelProviderForm({ providerId, onClose, onSaved }: Mode
               ) : (
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {models.map((m) => (
-                    <label
+                    <div
                       key={m.modelId}
-                      className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2 py-1.5 text-sm hover:border-primary/40"
+                      className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-sm hover:border-primary/40"
                     >
                       <input
                         type="checkbox"
                         checked={m.enabled}
                         onChange={() => toggleModel(m.modelId)}
+                        title="启用该模型（对项目选择器可见）"
                         className="h-3.5 w-3.5 shrink-0 accent-primary"
                       />
                       <span
@@ -496,7 +524,24 @@ export default function ModelProviderForm({ providerId, onClose, onSaved }: Mode
                       >
                         {m.modelId}
                       </span>
-                    </label>
+                      <label
+                        className={cn(
+                          'ml-auto flex shrink-0 cursor-pointer select-none items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                          m.supports1mContext
+                            ? 'border-primary/50 bg-primary/10 text-primary'
+                            : 'border-border text-slate-400 hover:border-primary/40',
+                        )}
+                        title="开启后该模型按 1M 上下文窗口使用：文档解析整篇喂入、对话历史与续写/重写上下文放宽（需模型真支持 1M）"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={m.supports1mContext}
+                          onChange={() => toggleModel1m(m.modelId)}
+                          className="hidden"
+                        />
+                        {m.supports1mContext ? '✓ ' : '· '}1M 上下文
+                      </label>
+                    </div>
                   ))}
                 </div>
               )}

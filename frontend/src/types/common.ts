@@ -30,11 +30,13 @@ export type GenerationStatus = 'pending' | 'streaming' | 'completed' | 'failed'
 /** 思维深度等级（docs/TECHv1.md §8.1：无/自动/低/中/高/极高） */
 export type DepthLevel = 'none' | 'auto' | 'low' | 'medium' | 'high' | 'extreme'
 
-/** 模型配置（V1：思维深度必填，temperature / maxTokens 可选） */
+/** 模型配置（V1：思维深度必填，temperature / maxTokens 可选；V1.1：use1mContext 可选） */
 export interface ModelConfig {
   depth: DepthLevel
   temperature?: number
   maxTokens?: number
+  /** 是否按 1M 上下文放开限制（文档整篇解析 / 对话历史 / 续写重写上下文） */
+  use1mContext?: boolean
 }
 
 /** 模型/提示词设置面板作用范围（docs/TECHv1.md §5.8 / PRDv1 §1.2 §2.2） */

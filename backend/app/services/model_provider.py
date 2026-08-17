@@ -12,7 +12,7 @@
 
 数据格式（与模型 docstring 一致）：
     api_keys_json: [{key_id, api_key_encrypted, enabled, priority, available_models}, ...]
-    models_json:   [{model_id, enabled}, ...]
+    models_json:   [{model_id, enabled, supports_1m_context}, ...]
 """
 from __future__ import annotations
 
@@ -215,19 +215,37 @@ def _merge_api_keys(existing_keys: list[dict], new_keys: list[dict]) -> list[dic
 
 
 def _merge_models(existing_models: list[dict], new_models: list[dict]) -> list[dict]:
-    """按 model_id 合并 models_json（一次全量替换，保留既有启用状态）。"""
-    existing_enabled = {
-        m["model_id"]: bool(m.get("enabled", True)) for m in existing_models
-    }
-    merged: dict[str, bool] = {}
+    """按 model_id 合并 models_json（一次全量替换，保留既有启用状态与 1M 开关）。"""
+    existing = {m["model_id"]: m for m in existing_models if m.get("model_id")}
+    merged: dict[str, dict] = {}
     for item in new_models:
         model_id = item.get("model_id")
         if not model_id:
             continue
-        merged[model_id] = bool(
-            item.get("enabled", existing_enabled.get(model_id, True))
-        )
-    return [{"model_id": mid, "enabled": enabled} for mid, enabled in merged.items()]
+        prev = existing.get(model_id, {})
+        merged[model_id] = {
+            "model_id": model_id,
+            "enabled": bool(item.get("enabled", prev.get("enabled", True))),
+            # 新值未显式提供时沿用既有配置（如 fetch-models 刷新重建模型列表）
+            "supports_1m_context": bool(
+                item.get("supports_1m_context", prev.get("supports_1m_context", False))
+            ),
+        }
+    return list(merged.values())
+
+
+def model_supports_1m(provider: ModelProvider, model_id: Optional[str]) -> bool:
+    """判断提供商下某模型是否开启「1M 上下文」开关（docs/TECHv1.1.md §4.2）。
+
+    读取 models_json 中同 model_id 的 supports_1m_context 标记（缺省 False）。
+    LLM 调用方据此放宽解析 / 对话历史 / 生成上下文的限制。纯函数，可单测。
+    """
+    if not model_id:
+        return False
+    for item in provider.models_json or []:
+        if item.get("model_id") == model_id:
+            return bool(item.get("supports_1m_context", False))
+    return False
 
 
 async def _get_or_raise(db: AsyncSession, provider_id: str) -> ModelProvider:
@@ -522,13 +540,21 @@ async def fetch_model_list(
         per_key_models[key_id] = model_ids
         all_models.extend(model_ids)
 
-    # 与既有模型合并（保留手动添加与启用状态），按首次出现顺序去重
+    # 与既有模型合并（保留手动添加、启用状态与 1M 上下文开关），按首次出现顺序去重
     existing_enabled = {
         m["model_id"]: bool(m.get("enabled", True)) for m in provider.models_json or []
     }
+    existing_1m = {
+        m["model_id"]: bool(m.get("supports_1m_context", False))
+        for m in provider.models_json or []
+    }
     merged_ids = list(dict.fromkeys([*existing_enabled.keys(), *all_models]))
     provider.models_json = [
-        {"model_id": mid, "enabled": existing_enabled.get(mid, True)}
+        {
+            "model_id": mid,
+            "enabled": existing_enabled.get(mid, True),
+            "supports_1m_context": existing_1m.get(mid, False),
+        }
         for mid in merged_ids
     ]
 

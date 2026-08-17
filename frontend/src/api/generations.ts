@@ -7,6 +7,7 @@ export interface ModelConfigWire {
   depth: DepthLevel
   temperature?: number
   max_tokens?: number
+  use_1m_context?: boolean
 }
 
 /** 续写请求体（wire 形态，POST /chapters/{id}/generate/continue） */
@@ -96,6 +97,7 @@ export function toModelConfigWire(config: Partial<ModelConfig>): ModelConfigWire
     depth: config.depth ?? 'auto',
     ...(config.temperature != null ? { temperature: config.temperature } : {}),
     ...(config.maxTokens != null ? { max_tokens: config.maxTokens } : {}),
+    ...(config.use1mContext != null ? { use_1m_context: config.use1mContext } : {}),
   }
 }
 
